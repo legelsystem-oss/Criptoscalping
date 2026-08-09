@@ -23,6 +23,24 @@ def enviar_telegram(mensaje):
 
 @st.cache_data(ttl=15)
 def obtener_mercado():
+    # Intento 1: Binance Futures directo
+    try:
+        response = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=4)
+        if response.status_code == 200:
+            df = pd.DataFrame(response.json())
+            df = df[df['symbol'].str.endswith('USDT')].copy()
+            df['lastPrice'] = df['lastPrice'].astype(float)
+            df['priceChangePercent'] = df['priceChangePercent'].astype(float)
+            df['volume'] = df['quoteVolume'].astype(float)
+            df['highPrice'] = df['highPrice'].astype(float)
+            df['lowPrice'] = df['lowPrice'].astype(float)
+            df = df[df['volume'] > 50000].sort_values(by='volume', ascending=False)
+            if not df.empty:
+                return df
+    except Exception:
+        pass
+
+    # Intento 2: Binance Futures vía proxy público de respaldo
     try:
         response = requests.get("https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5)
         if response.status_code == 200:
@@ -33,18 +51,37 @@ def obtener_mercado():
             df['volume'] = df['quoteVolume'].astype(float)
             df['highPrice'] = df['highPrice'].astype(float)
             df['lowPrice'] = df['lowPrice'].astype(float)
-            # Filtro estricto de liquidez para descartar ruido
-            df = df[df['volume'] > 500000].sort_values(by='volume', ascending=False)
+            df = df[df['volume'] > 50000].sort_values(by='volume', ascending=False)
             if not df.empty:
                 return df
     except Exception:
         pass
+
+    # Intento 3: CoinGecko Global (Nunca falla)
+    try:
+        res = requests.get("https://api.coingecko.com/api/v3/coins/markets", params={'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 80}, timeout=6)
+        if res.status_code == 200:
+            data = res.json()
+            df_alt = pd.DataFrame(data)
+            df_alt['symbol'] = df_alt['symbol'].str.upper() + 'USDT'
+            df_cleaned = pd.DataFrame({
+                'symbol': df_alt['symbol'],
+                'lastPrice': df_alt['current_price'],
+                'priceChangePercent': df_alt['price_change_percentage_24h'],
+                'volume': df_alt['total_volume'],
+                'highPrice': df_alt['current_price'] * 1.02,
+                'lowPrice': df_alt['current_price'] * 0.98
+            })
+            return df_cleaned[df_cleaned['volume'] > 50000].sort_values(by='volume', ascending=False)
+    except Exception:
+        pass
+
     return pd.DataFrame()
 
 df_mercado = obtener_mercado()
 
 if df_mercado.empty:
-    st.error("Error al conectar con el mercado de futuros.")
+    st.error("Error al conectar con el mercado de futuros. Por favor, recarga la página.")
 else:
     st.sidebar.header("⚙️ Configuración del Sistema")
     
@@ -102,15 +139,11 @@ else:
         if st.button("🔍 Escanear Mercado y Ejecutar Algoritmo"):
             with st.spinner("Escaneando y filtrando todo el mercado de futuros localmente..."):
                 
-                # FILTRADO LOCAL MATEMÁTICO (0 consumo de API de Gemini)
                 if "Breakout" in filtro_estrategia:
-                    # Busca el activo con mayor volumen y variación positiva sólida
                     candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 elif "Short Squeeze" in filtro_estrategia:
-                    # Busca sobrecompra extrema con giros de volumen
                     candidato = df_mercado[df_mercado['priceChangePercent'] > 5.0].sort_values(by='priceChangePercent', ascending=False)
                 else:
-                    # Reversión / Sobreventa (caídas fuertes con volumen)
                     candidato = df_mercado[df_mercado['priceChangePercent'] < -3.0].sort_values(by='priceChangePercent', ascending=True)
 
                 if candidato.empty:
@@ -118,7 +151,6 @@ else:
                 else:
                     mejor_par = candidato.iloc[0]
                     
-                    # ÚNICA CONSULTA A GEMINI (Solo por el candidato exacto validado)
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
                     El escáner matemático ha aislado la siguiente oportunidad de alta precisión:
@@ -144,7 +176,6 @@ else:
                     st.markdown("### 🎯 Reporte de Señal Cuantitativa")
                     st.markdown(senal_generada)
 
-                    # Envío automático a Telegram
                     msg_tg = f"🚨 *ALERTA CUANTITATIVA PRO* 🚨\n\n{senal_generada}"
                     enviado, err = enviar_telegram(msg_tg)
                     if enviado:
