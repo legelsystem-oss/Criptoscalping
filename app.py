@@ -4,7 +4,7 @@ import requests
 from google import genai
 
 st.set_page_config(page_title="CryptoScalp AI - Bot Cuantitativo Pro", layout="wide")
-st.title("⚡ CryptoScalp AI: Bot Cuantitativo Autónomo de Alta Precisión")
+st.title("⚡ CryptoScalp AI: Bot Cuantitativo Autónomo & Panel Manual")
 
 API_KEY = "AQ.Ab8RN6IUU1HCyoTBJvilfLLEVH95L9oDAsukinvSs2yE28IVHQ"
 client = genai.Client(api_key=API_KEY)
@@ -23,7 +23,6 @@ def enviar_telegram(mensaje):
 
 @st.cache_data(ttl=15)
 def obtener_mercado():
-    # Intento 1: Binance Futures directo
     try:
         response = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=4)
         if response.status_code == 200:
@@ -40,7 +39,6 @@ def obtener_mercado():
     except Exception:
         pass
 
-    # Intento 2: Binance Futures vía proxy público de respaldo
     try:
         response = requests.get("https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5)
         if response.status_code == 200:
@@ -57,7 +55,6 @@ def obtener_mercado():
     except Exception:
         pass
 
-    # Intento 3: CoinGecko Global (Nunca falla)
     try:
         res = requests.get("https://api.coingecko.com/api/v3/coins/markets", params={'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 80}, timeout=6)
         if res.status_code == 200:
@@ -101,19 +98,38 @@ else:
         datos_par = df_mercado[df_mercado['symbol'] == par_sel].iloc[0]
 
         st.subheader(f"📊 Análisis Técnico: {par_sel}")
-        if st.button(f"🚀 Analizar {par_sel}"):
-            with st.spinner("Procesando..."):
+        if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
+            with st.spinner("Procesando análisis con IA..."):
                 prompt = f"""
-                Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
-                Da un reporte institucional completo con:
-                1. **SEÑAL DE OPERACIÓN** (LONG 🟢 / SHORT 🔴).
-                2. **Análisis Técnico Profundo**.
-                3. **Parámetros de Entrada, TP 1, TP 2 y Stop Loss**.
-                4. **Gestión de Riesgo y Apalancamiento**.
+                Actúa como trader institucional experto. Analiza el activo a operar {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
+                Da una señal profesional estructurada estrictamente así:
+                1. **PAR A OPERAR:** {par_sel}
+                2. **SEÑAL:** (LONG 🟢 / SHORT 🔴)
+                3. **ANÁLISIS TÉCNICO:** (Explicación concisa y directa)
+                4. **PRECIO DE ENTRADA:** [Valor exacto]
+                5. **TAKE PROFIT (TP):** [TP 1 y TP 2]
+                6. **STOP LOSS (SL):** [Valor estricto]
+                7. **APALANCAMIENTO RECOMENDADO:** [Ej: 10x - 20x]
                 """
                 try:
                     res = client.models.generate_content(model='gemini-3.5-flash', contents=prompt)
-                    st.markdown(res.text)
+                    senal_manual = res.text
+                    st.markdown(senal_manual)
+
+                    msg_tg = f"""🚨 *ALERTA MANUAL (BÚSQUEDA DIRECTA)* 🚨
+
+🎯 *PAR A OPERAR:* `{par_sel}`
+📊 *ESTRATEGIA:* {estrategia}
+
+{senal_manual}
+
+⚡ *CryptoScalp AI - Terminal Manual*"""
+
+                    enviado, err = enviar_telegram(msg_tg)
+                    if enviado:
+                        st.toast("¡Señal manual enviada a Telegram!", icon="✅")
+                    else:
+                        st.error(f"Error enviando a Telegram: {err}")
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -128,7 +144,7 @@ else:
 
     else:
         st.subheader("🤖 Bot Cuantitativo de Alta Precisión (Ahorro de API)")
-        st.markdown("Filtra localmente todo el mercado mediante reglas estrictas de scalping y **solo consulta a Gemini cuando encuentra una oportunidad perfecta de alta probabilidad**, evitando agotar tus recursos.")
+        st.markdown("Filtra localmente todo el mercado mediante reglas estrictas de scalping y **solo consulta a Gemini cuando encuentra una oportunidad perfecta de alta probabilidad**.")
 
         filtro_estrategia = st.selectbox("Filtro Cuantitativo:", [
             "Breakout de Alto Volumen (Ruptura alcista con volumen institucional)",
@@ -154,19 +170,20 @@ else:
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
                     El escáner matemático ha aislado la siguiente oportunidad de alta precisión:
-                    - Activo: {mejor_par['symbol']}
+                    - Activo a Operar: {mejor_par['symbol']}
                     - Precio Actual: {mejor_par['lastPrice']}
                     - Variación 24h: {mejor_par['priceChangePercent']}%
                     - Volumen Negociado: {mejor_par['volume']} USDT
                     - Filtro Aplicado: {filtro_estrategia}
                     
                     Proporciona una señal altamente precisa, concisa y profesional estructurada estrictamente así:
-                    1. **SEÑAL:** (LONG 🟢 o SHORT 🔴)
-                    2. **ANÁLISIS TÉCNICO:** (Explicación concisa y directa de por qué el algoritmo seleccionó este setup).
-                    3. **PRECIO DE ENTRADA:** [Valor exacto]
-                    4. **TAKE PROFIT (TP):** [TP 1 y TP 2]
-                    5. **STOP LOSS (SL):** [Valor estricto]
-                    6. **APALANCAMIENTO RECOMENDADO:** [Ej: 10x - 20x]
+                    1. **PAR A OPERAR:** {mejor_par['symbol']}
+                    2. **SEÑAL:** (LONG 🟢 / SHORT 🔴)
+                    3. **ANÁLISIS TÉCNICO:** (Explicación concisa y directa)
+                    4. **PRECIO DE ENTRADA:** [Valor exacto]
+                    5. **TAKE PROFIT (TP):** [TP 1 y TP 2]
+                    6. **STOP LOSS (SL):** [Valor estricto]
+                    7. **APALANCAMIENTO RECOMENDADO:** [Ej: 10x - 20x]
                     """
 
                     response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
@@ -176,7 +193,15 @@ else:
                     st.markdown("### 🎯 Reporte de Señal Cuantitativa")
                     st.markdown(senal_generada)
 
-                    msg_tg = f"🚨 *ALERTA CUANTITATIVA PRO* 🚨\n\n{senal_generada}"
+                    msg_tg = f"""🚨 *ALERTA DE SCALPING FUTUROS* 🚨
+
+🎯 *PAR A OPERAR:* `{mejor_par['symbol']}`
+📊 *ESTRATEGIA:* {filtro_estrategia}
+
+{senal_generada}
+
+⚡ *CryptoScalp AI - Automatización Institucional*"""
+
                     enviado, err = enviar_telegram(msg_tg)
                     if enviado:
                         st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
