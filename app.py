@@ -100,32 +100,28 @@ else:
         st.subheader(f"📊 Análisis Técnico: {par_sel}")
         if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
             with st.spinner("Procesando análisis con IA..."):
+                # Formato estricto solicitado
+                par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
-                Actúa como trader institucional experto. Analiza el activo a operar {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
-                Da una señal profesional estructurada estrictamente así:
-                1. **PAR A OPERAR:** {par_sel}
-                2. **SEÑAL:** (LONG 🟢 / SHORT 🔴)
-                3. **ANÁLISIS TÉCNICO:** (Explicación concisa y directa)
-                4. **PRECIO DE ENTRADA:** [Valor exacto]
-                5. **TAKE PROFIT (TP):** [TP 1 y TP 2]
-                6. **STOP LOSS (SL):** [Valor estricto]
-                7. **APALANCAMIENTO RECOMENDADO:** [Ej: 10x - 20x]
+                Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
+                Genera la respuesta siguiendo EXACTAMENTE este formato estricto (no cambies los nombres de los campos):
+                🚨 SEÑAL IA BINANCE
+                Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
+                📊 Mercado: Futuros | ⏱ Temp: 15m
+
+                📍 Niveles Operativos:
+                ➡️ Entrada: [Precio exacto]
+                🎯 TP1: [Valor exacto] | TP2: [Valor exacto]
+                🛡️ SL: [Valor exacto]
+
+                💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                 """
                 try:
                     res = client.models.generate_content(model='gemini-3.5-flash', contents=prompt)
                     senal_manual = res.text
                     st.markdown(senal_manual)
 
-                    msg_tg = f"""🚨 *ALERTA MANUAL (BÚSQUEDA DIRECTA)* 🚨
-
-🎯 *PAR A OPERAR:* `{par_sel}`
-📊 *ESTRATEGIA:* {estrategia}
-
-{senal_manual}
-
-⚡ *CryptoScalp AI - Terminal Manual*"""
-
-                    enviado, err = enviar_telegram(msg_tg)
+                    enviado, err = enviar_telegram(senal_manual)
                     if enviado:
                         st.toast("¡Señal manual enviada a Telegram!", icon="✅")
                     else:
@@ -158,7 +154,7 @@ else:
                 if "Breakout" in filtro_estrategia:
                     candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 elif "Short Squeeze" in filtro_estrategia:
-                    candidato = df_mercado[df_mercado['priceChangePercent'] > 5.0].sort_values(by='priceChangePercent', ascending=False)
+                    candidato = df_mercado[df_mercado['priceChangePercent'] > 5.0].sort_values(by='volume', ascending=False)
                 else:
                     candidato = df_mercado[df_mercado['priceChangePercent'] < -3.0].sort_values(by='priceChangePercent', ascending=True)
 
@@ -166,6 +162,7 @@ else:
                     st.warning("El escaneo no encontró activos cumpliendo los parámetros estrictos en este ciclo. Intenta de nuevo en unos minutos.")
                 else:
                     mejor_par = candidato.iloc[0]
+                    par_slash = mejor_par['symbol'].replace("USDT", "/USDT")
                     
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
@@ -176,14 +173,17 @@ else:
                     - Volumen Negociado: {mejor_par['volume']} USDT
                     - Filtro Aplicado: {filtro_estrategia}
                     
-                    Proporciona una señal altamente precisa, concisa y profesional estructurada estrictamente así:
-                    1. **PAR A OPERAR:** {mejor_par['symbol']}
-                    2. **SEÑAL:** (LONG 🟢 / SHORT 🔴)
-                    3. **ANÁLISIS TÉCNICO:** (Explicación concisa y directa)
-                    4. **PRECIO DE ENTRADA:** [Valor exacto]
-                    5. **TAKE PROFIT (TP):** [TP 1 y TP 2]
-                    6. **STOP LOSS (SL):** [Valor estricto]
-                    7. **APALANCAMIENTO RECOMENDADO:** [Ej: 10x - 20x]
+                    Genera la señal respetando EXACTAMENTE este formato:
+                    🚨 SEÑAL IA BINANCE
+                    Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
+                    📊 Mercado: Futuros | ⏱ Temp: 15m
+
+                    📍 Niveles Operativos:
+                    ➡️ Entrada: [Precio exacto]
+                    🎯 TP1: [Valor exacto] | TP2: [Valor exacto]
+                    🛡️ SL: [Valor exacto]
+
+                    💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                     """
 
                     response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
@@ -193,16 +193,7 @@ else:
                     st.markdown("### 🎯 Reporte de Señal Cuantitativa")
                     st.markdown(senal_generada)
 
-                    msg_tg = f"""🚨 *ALERTA DE SCALPING FUTUROS* 🚨
-
-🎯 *PAR A OPERAR:* `{mejor_par['symbol']}`
-📊 *ESTRATEGIA:* {filtro_estrategia}
-
-{senal_generada}
-
-⚡ *CryptoScalp AI - Automatización Institucional*"""
-
-                    enviado, err = enviar_telegram(msg_tg)
+                    enviado, err = enviar_telegram(senal_generada)
                     if enviado:
                         st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
                     else:
