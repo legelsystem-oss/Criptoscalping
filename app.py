@@ -14,14 +14,12 @@ client = genai.Client(api_key=API_KEY)
 # 1. Obtener y filtrar datos del mercado eliminando pares inactivos
 @st.cache_data(ttl=30)
 def obtener_mercado_filtrado():
-    # Intento con la API de Binance Futures vía proxy para evitar bloqueos
     url_proxy = "https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr"
     try:
         response = requests.get(url_proxy, timeout=8)
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-            # Filtrar exclusivamente pares USDT y descartar los que tengan volumen 0 o estén inactivos (delisted)
             df = df[df['symbol'].str.endswith('USDT')].copy()
             df['lastPrice'] = df['lastPrice'].astype(float)
             df['priceChangePercent'] = df['priceChangePercent'].astype(float)
@@ -29,13 +27,12 @@ def obtener_mercado_filtrado():
             df['highPrice'] = df['highPrice'].astype(float)
             df['lowPrice'] = df['lowPrice'].astype(float)
             
-            # FILTRO CRÍTICO: Descartar tokens inactivos, con volumen cero o suspendidos
+            # Filtrar tokens inactivos o con volumen muy bajo
             df = df[df['volume'] > 1000] 
             return df.sort_values(by='volume', ascending=False)
     except Exception:
         pass
 
-    # Respaldo con CoinGecko si falla Binance
     try:
         url_alt = "https://api.coingecko.com/api/v3/coins/markets"
         params = {'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 100, 'page': 1}
@@ -67,18 +64,15 @@ else:
     # 2. Panel Lateral de Configuración
     st.sidebar.header("⚙️ Configuración de Scalping")
     
-    # Filtro especial de categoría (Todos vs Pares Alpha / Alta Volatilidad)
     tipo_mercado = st.sidebar.radio(
         "Filtrar Mercado:",
         ["Todos los Pares Líquidos", "🔥 Solo Pares Alpha (Alto Impulso)"]
     )
     
-    # Lógica para aislar pares Alpha (ejemplos de tokens de alta volatilidad/baja cap o seleccionados del top)
     if tipo_mercado == "🔥 Solo Pares Alpha (Alto Impulso)":
-        # Consideramos Alpha a los pares del ranking medio-alto con alta variación o tokens específicos de tendencia
         df_mercado = df_mercado[(df_mercado['volume'] > 500000) & (df_mercado['volume'] < 50000000)]
         if df_mercado.empty:
-            df_mercado = obtener_mercado_filtrado().tail(30) # Respaldo si el filtro es muy estricto
+            df_mercado = obtener_mercado_filtrado().tail(30)
             
     temporalidad = st.sidebar.selectbox(
         "Temporalidad:",
@@ -100,19 +94,19 @@ else:
 
     datos_par = df_mercado[df_mercado['symbol'] == par_seleccionado].iloc[0]
 
-    # 3. Widget de Gráfica Interactiva con Manejo de Errores de Símbolo
+    # 3. Widget de Gráfica Interactiva
     st.subheader(f"📈 Gráfica en Vivo: {par_seleccionado} (Binance Futures)")
     
-    # Asegurar formato correcto para TradingView
     simbolo_tv = f"BINANCE:{par_seleccionado}"
     
+    # Nota: Las llaves dobles {{ y }} evitan conflictos con el formateo de Python
     html_tradingview = f"""
     <!-- TradingView Widget BEGIN -->
     <div class="tradingview-widget-container" style="height:500px;width:100%">
       <div id="tradingview_widget" style="height:100%;width:100%"></div>
       <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
       <script type="text/javascript">
-      try {
+      try {{
           new TradingView.widget(
           {{
             "autosize": true,
@@ -127,7 +121,7 @@ else:
             "allow_symbol_change": true,
             "container_id": "tradingview_widget"
           }});
-      } catch(e) {{
+      }} catch(e) {{
           console.log("Error cargando widget de gráfico");
       }}
       </script>
