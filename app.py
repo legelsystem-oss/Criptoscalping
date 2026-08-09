@@ -25,23 +25,44 @@ def enviar_telegram(mensaje):
 
 @st.cache_data(ttl=15)
 def obtener_mercado():
+    # Intento 1: Binance Futures vía proxy público
     try:
-        response = requests.get("https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=6)
+        response = requests.get("https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5)
         if response.status_code == 200:
             df = pd.DataFrame(response.json())
             df = df[df['symbol'].str.endswith('USDT')].copy()
             df['lastPrice'] = df['lastPrice'].astype(float)
             df['priceChangePercent'] = df['priceChangePercent'].astype(float)
             df['volume'] = df['quoteVolume'].astype(float)
-            return df[df['volume'] > 100000].sort_values(by='volume', ascending=False)
+            df = df[df['volume'] > 10000].sort_values(by='volume', ascending=False)
+            if not df.empty:
+                return df
     except Exception:
         pass
+
+    # Intento 2 (Respaldo Global): CoinGecko (Nunca falla en la nube)
+    try:
+        res = requests.get("https://api.coingecko.com/api/v3/coins/markets", params={'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 50}, timeout=6)
+        if res.status_code == 200:
+            data = res.json()
+            df_alt = pd.DataFrame(data)
+            df_alt['symbol'] = df_alt['symbol'].str.upper() + 'USDT'
+            df_cleaned = pd.DataFrame({
+                'symbol': df_alt['symbol'],
+                'lastPrice': df_alt['current_price'],
+                'priceChangePercent': df_alt['price_change_percentage_24h'],
+                'volume': df_alt['total_volume']
+            })
+            return df_cleaned[df_cleaned['volume'] > 10000].sort_values(by='volume', ascending=False)
+    except Exception:
+        pass
+
     return pd.DataFrame()
 
 df_mercado = obtener_mercado()
 
 if df_mercado.empty:
-    st.error("Error al conectar con el mercado.")
+    st.error("Error al conectar con el mercado. Revisa tu red o intenta recargar en unos segundos.")
 else:
     st.sidebar.header("⚙️ Configuración")
     input_token = st.sidebar.text_input("Bot Token Telegram", value=TELEGRAM_BOT_TOKEN, type="password")
