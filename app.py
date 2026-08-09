@@ -133,7 +133,7 @@ else:
     # 5. Análisis de Señales con la IA de Gemini
     st.markdown("---")
     if st.button(f"🚀 Generar Señal IA (Long / Short) para {par_seleccionado}"):
-        with st.spinner(f aplicando estrategia de {estrategia} en temporalidad de {temporalidad}...):
+        with st.spinner(f"Aplicando estrategia de {estrategia} en temporalidad de {temporalidad}..."):
             
             prompt = f"""
             Actúa como un trader institucional experto en futuros de criptomonedas y análisis técnico avanzado.
