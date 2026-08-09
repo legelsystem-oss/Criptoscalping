@@ -9,19 +9,22 @@ st.title("⚡ CryptoScalp AI: Terminal Manual, Gráfica & Bot Automático Telegr
 API_KEY = "AQ.Ab8RN6IUU1HCyoTBJvilfLLEVH95L9oDAsukinvSs2yE28IVHQ"
 client = genai.Client(api_key=API_KEY)
 
-TELEGRAM_BOT_TOKEN = "AQUÍ_TU_TOKEN_DE_TELEGRAM"
-TELEGRAM_CHAT_ID = "AQUÍ_TU_CHAT_ID"
+# Credenciales configuradas directamente
+TELEGRAM_BOT_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
+TELEGRAM_CHAT_ID = "1690783827"
 
 def enviar_telegram(mensaje):
-    if TELEGRAM_BOT_TOKEN == "AQUÍ_TU_TOKEN_DE_TELEGRAM":
-        return False
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID, 
+        "text": mensaje, 
+        "parse_mode": "Markdown"
+    }
     try:
-        response = requests.post(url, json=payload, timeout=5)
-        return response.status_code == 200
-    except Exception:
-        return False
+        response = requests.post(url, json=payload, timeout=10)
+        return response.status_code == 200, response.text
+    except Exception as e:
+        return False, str(e)
 
 @st.cache_data(ttl=15)
 def obtener_mercado():
@@ -67,10 +70,17 @@ if df_mercado.empty:
     st.error("Error al conectar con el mercado. Revisa tu red o intenta recargar en unos segundos.")
 else:
     st.sidebar.header("⚙️ Configuración del Sistema")
-    input_token = st.sidebar.text_input("Bot Token Telegram", value=TELEGRAM_BOT_TOKEN, type="password")
-    input_chat = st.sidebar.text_input("Chat ID Telegram", value=TELEGRAM_CHAT_ID)
-    if input_token: TELEGRAM_BOT_TOKEN = input_token
-    if input_chat: TELEGRAM_CHAT_ID = input_chat
+    
+    # Verificador de estado de Telegram integrado en la barra lateral
+    with st.sidebar.expander("Estado de Telegram"):
+        st.write("Token configurado: OK")
+        st.write("Chat ID: 1690783827")
+        if st.button("💬 Probar Mensaje a Telegram"):
+            exito, det = enviar_telegram("🤖 *Prueba de conexión exitosa desde CryptoScalp AI*")
+            if exito:
+                st.success("¡Mensaje de prueba enviado!")
+            else:
+                st.error(f"Fallo al enviar: {det}")
 
     modo_operacion = st.sidebar.radio("Modo de Operación:", ["🎛️ Panel Manual y Gráficos", "🤖 Bot Automático (Escáner & Alertas)"])
 
@@ -130,7 +140,7 @@ else:
 
     else:
         st.subheader("🤖 Bot Automático de Alertas (Telegram)")
-        st.markdown("Este bot escanea de forma autónoma el mercado buscando las mejores oportunidades de scalping, realiza el análisis completo con IA y envía la señal directo a tu Telegram sin agotar tus recursos.")
+        st.markdown("Este bot escanea de forma autónoma el mercado buscando las mejores oportunidades de scalping, realiza el análisis completo con IA y envía la señal directo a tu Telegram de forma totalmente automatizada.")
 
         estrategia_bot = st.selectbox("Estrategia del Bot:", ["Momentum (Ruptura de Volumen)", "Reversión Extrema"])
 
@@ -162,10 +172,11 @@ else:
                     st.markdown(resultado_ia)
 
                     mensaje_telegram = f"🚨 *BOT AUTOMÁTICO - SEÑAL DE SCALPING* 🚨\n\n{resultado_ia}"
-                    enviado = enviar_telegram(mensaje_telegram)
+                    enviado, error_detalle = enviar_telegram(mensaje_telegram)
+                    
                     if enviado:
                         st.toast("¡Alerta enviada exitosamente a tu Telegram!", icon="✅")
                     else:
-                        st.warning("El análisis se generó, pero verifica tus credenciales de Telegram.")
+                        st.error(f"Error enviando a Telegram: {error_detalle}. Asegúrate de haberle hablado al menos una vez a tu bot en Telegram (/start) para que pueda enviarte mensajes.")
                 except Exception as e:
                     st.error(f"Error al procesar con Gemini: {e}")
