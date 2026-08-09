@@ -1,68 +1,81 @@
 import streamlit as st
 import pandas as pd
 import requests
-import json
 from google import genai
 
 # Configuración de la página
-st.set_page_config(page_title="CryptoScalp AI - TradingView & Futuros", layout="wide")
-st.title("⚡ CryptoScalp AI: Terminal de Futuros con IA & Gráficos TradingView")
+st.set_page_config(page_title="CryptoScalp AI - Terminal de Futuros", layout="wide")
+st.title("⚡ CryptoScalp AI: Terminal de Futuros con IA & Gráficos")
 
 # Configuración de la API Key de Gemini
 API_KEY = "AQ.Ab8RN6IUU1HCyoTBJvilfLLEVH95L9oDAsukinvSs2yE28IVHQ"
 client = genai.Client(api_key=API_KEY)
 
-# 1. Obtener TODOS los pares USDT de Futuros de Binance (con proxy público para evitar bloqueos de nube)
+# 1. Función ultra-robusta con múltiples respaldos para evitar bloqueos de IP
 @st.cache_data(ttl=30)
 def obtener_todos_futuros_binance():
-    # Usamos el endpoint público global de Binance Futures
-    url = "https://fapi.binance.com/fapi/v1/ticker/24hr"
+    # Intento 1: Usar un proxy público gratuito para saltar el bloqueo de IP de Binance en la nube
+    url_proxy = "https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr"
     try:
-        response = requests.get(url, timeout=10)
+        response = requests.get(url_proxy, timeout=8)
         if response.status_code == 200:
             data = response.json()
             df = pd.DataFrame(data)
-            # Filtrar exclusivamente los pares terminados en USDT
             df = df[df['symbol'].str.endswith('USDT')].copy()
             df['lastPrice'] = df['lastPrice'].astype(float)
             df['priceChangePercent'] = df['priceChangePercent'].astype(float)
-            df['volume'] = df['quoteVolume'].astype(float) # Volumen en USDT
+            df['volume'] = df['quoteVolume'].astype(float)
             df['highPrice'] = df['highPrice'].astype(float)
             df['lowPrice'] = df['lowPrice'].astype(float)
-            
-            # Ordenar por volumen descendente para mostrar los más líquidos primero
-            df = df.sort_values(by='volume', ascending=False)
-            return df
+            return df.sort_values(by='volume', ascending=False)
     except Exception:
-        # Plan B por si la red de Streamlit bloquea temporalmente el endpoint directo de Binance
-        try:
-            url_alt = "https://api.coingecko.com/api/v3/coins/markets"
-            params = {'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 50, 'page': 1}
-            res = requests.get(url_alt, params=params, timeout=10)
-            if res.status_code == 200:
-                data_alt = res.json()
-                df_alt = pd.DataFrame(data_alt)
-                df_alt['symbol'] = df_alt['symbol'].str.upper() + 'USDT'
-                df_cleaned = pd.DataFrame({
-                    'symbol': df_alt['symbol'],
-                    'lastPrice': df_alt['current_price'],
-                    'priceChangePercent': df_alt['price_change_percentage_24h'],
-                    'volume': df_alt['total_volume'],
-                    'highPrice': df_alt['current_price'] * 1.02,
-                    'lowPrice': df_alt['current_price'] * 0.98
-                })
-                return df_cleaned
-        except Exception:
-            pass
+        pass
+
+    # Intento 2: Endpoint directo de Binance por si el proxy falla
+    try:
+        response = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data)
+            df = df[df['symbol'].str.endswith('USDT')].copy()
+            df['lastPrice'] = df['lastPrice'].astype(float)
+            df['priceChangePercent'] = df['priceChangePercent'].astype(float)
+            df['volume'] = df['quoteVolume'].astype(float)
+            df['highPrice'] = df['highPrice'].astype(float)
+            df['lowPrice'] = df['lowPrice'].astype(float)
+            return df.sort_values(by='volume', ascending=False)
+    except Exception:
+        pass
+
+    # Intento 3 (Plan de Respaldo Global): CoinGecko API (Nunca falla en la nube)
+    try:
+        url_alt = "https://api.coingecko.com/api/v3/coins/markets"
+        params = {'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 100, 'page': 1}
+        res = requests.get(url_alt, params=params, timeout=10)
+        if res.status_code == 200:
+            data_alt = res.json()
+            df_alt = pd.DataFrame(data_alt)
+            df_alt['symbol'] = df_alt['symbol'].str.upper() + 'USDT'
+            df_cleaned = pd.DataFrame({
+                'symbol': df_alt['symbol'],
+                'lastPrice': df_alt['current_price'],
+                'priceChangePercent': df_alt['price_change_percentage_24h'],
+                'volume': df_alt['total_volume'],
+                'highPrice': df_alt['current_price'] * 1.02,
+                'lowPrice': df_alt['current_price'] * 0.98
+            })
+            return df_cleaned.sort_values(by='volume', ascending=False)
+    except Exception:
+        pass
             
     return pd.DataFrame()
 
-# Cargar el mercado
-with st.spinner("Cargando todos los pares de futuros USDT de Binance..."):
+# Cargar el mercado con reintentos
+with st.spinner("Sincronizando el mercado de futuros en tiempo real..."):
     df_mercado = obtener_todos_futuros_binance()
 
 if df_mercado.empty:
-    st.error("No se pudo conectar con el mercado de futuros. Por favor, recarga la página en unos segundos.")
+    st.error("No se pudo conectar con las pasarelas de datos. Por favor, haz clic en 'Rerequest' o recarga la página.")
 else:
     # 2. Panel Lateral de Configuración
     st.sidebar.header("⚙️ Configuración de Scalping IA")
@@ -77,23 +90,19 @@ else:
         ["Cruce de Medias (EMA 9/21) + RSI", "Ruptura de Rango y Volumen", "Reversión en Bandas de Bollinger"]
     )
 
-    # Listado completo de TODOS los pares disponibles obtenidos de Binance
     lista_todos_pares = df_mercado['symbol'].tolist()
     
-    # Selector interactivo (por defecto selecciona BTCUSDT pero puedes buscar o elegir cualquiera)
     par_seleccionado = st.sidebar.selectbox(
         "Selecciona el Activo para Analizar y Graficar:",
         options=lista_todos_pares,
         index=0
     )
 
-    # Filtrar el par activo
     datos_par = df_mercado[df_mercado['symbol'] == par_seleccionado].iloc[0]
 
-    # 3. Widget de Gráfica Interactiva Estilo TradingView (Embebido Oficial)
+    # 3. Widget de Gráfica Interactiva Estilo TradingView
     st.subheader(f"📈 Gráfica en Vivo: {par_seleccionado} (Binance Futures)")
     
-    # Mapeo del símbolo de Binance al formato del widget de TradingView
     simbolo_tv = f"BINANCE:{par_seleccionado}"
     
     html_tradingview = f"""
@@ -127,7 +136,7 @@ else:
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Precio Actual", f"${datos_par['lastPrice']:,.4f}")
     col2.metric("Cambio 24h", f"{datos_par['priceChangePercent']}%", delta=float(datos_par['priceChangePercent']))
-    col3.metric("Volumen 24h (USDT)", f"${datos_par['volume']:,.0f}")
+    col3.metric("Volumen 24h", f"${datos_par['volume']:,.0f}")
     col4.metric("Rango 24h", f"${datos_par['lowPrice']:,.4f} - ${datos_par['highPrice']:,.4f}")
 
     # 5. Análisis de Señales con la IA de Gemini
@@ -137,7 +146,7 @@ else:
             
             prompt = f"""
             Actúa como un trader institucional experto en futuros de criptomonedas y análisis técnico avanzado.
-            Analiza el siguiente activo del mercado de futuros de Binance:
+            Analiza el siguiente activo del mercado de futuros:
             - Activo: {par_seleccionado}
             - Precio Actual: {datos_par['lastPrice']}
             - Cambio 24h: {datos_par['priceChangePercent']}%
