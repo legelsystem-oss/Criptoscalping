@@ -7,8 +7,8 @@ import re
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-# API Key actualizada (NOTA: Si da error 401, necesitas generar una que empiece por AIza...)
-DEFAULT_GEMINI_KEY = "AQ.Ab8RN6LP-qqUiidP_YXUNXWdJ5dpVzLSfFDtR2c8GPxyR-pvIg"
+# API Key actualizada
+DEFAULT_GEMINI_KEY = "AQ.Ab8RN6IZuhF4Axj0DJS98CxGSIwllQeaoi5_M5SC9zE_rBRCHQ"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
