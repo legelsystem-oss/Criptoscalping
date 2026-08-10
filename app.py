@@ -1,16 +1,23 @@
 import streamlit as st
 import pandas as pd
 import requests
+import time
 from google import genai
 import re
 
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-# API Key actualizada
-DEFAULT_GEMINI_KEY = "AQ.Ab8RN6IZuhF4Axj0DJS98CxGSIwllQeaoi5_M5SC9zE_rBRCHQ"
+# API Key predeterminada
+DEFAULT_GEMINI_KEY = "AQ.Ab8RN6LUqj-Gvo5BTJkz3QD4iuRsyVEiBUyHY5ECWkQS_6LBJg"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
+
+# --- INICIALIZACIÓN DE MEMORIA (EVITA ERRORES Y SPAM DE LA API) ---
+if "posicion_activa" not in st.session_state:
+    st.session_state.posicion_activa = None
+if "last_api_call" not in st.session_state:
+    st.session_state.last_api_call = 0  # Temporizador para evitar agotar la API
 
 # Configuración de la barra lateral para credenciales y parámetros globales
 st.sidebar.header("⚙️ Configuración del Sistema")
@@ -20,21 +27,40 @@ with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
     input_tg_token = st.text_input("Telegram Bot Token", value=DEFAULT_TG_TOKEN, type="password")
     input_tg_chat = st.text_input("Telegram Chat ID", value=DEFAULT_TG_CHAT)
 
-# Selector de temporalidad global (Afecta a la IA, a Telegram y a la Gráfica)
+# Selector de temporalidad global
 st.sidebar.markdown("---")
 st.sidebar.subheader("⏱️ Parámetros de Tiempo")
 temporalidad = st.sidebar.selectbox(
     "Temporalidad de Análisis:", 
     ["5m", "15m", "30m", "1h", "4h", "1d"], 
-    index=1 # Por defecto en 15m
+    index=1
 )
 
-# Diccionario para convertir la temporalidad al formato que usa TradingView
 tv_intervals = {"5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D"}
 tv_interval = tv_intervals[temporalidad]
 
 # Inicializar cliente de Gemini
 client = genai.Client(api_key=input_gemini_key)
+
+# --- ESCUDO ANTI-SPAM PARA GEMINI ---
+def consultar_gemini(prompt):
+    """Función centralizada para llamar a la IA con protección de límites de API."""
+    tiempo_actual = time.time()
+    
+    # Bloqueo estricto de 15 segundos entre peticiones para no saturar la cuota gratuita
+    if tiempo_actual - st.session_state.last_api_call < 15:
+        return None, "⏳ *Protección Anti-Spam activada:* Por favor, espera al menos 15 segundos entre cada análisis para no bloquear tu API Key."
+    
+    try:
+        st.session_state.last_api_call = tiempo_actual
+        # Se usa gemini-1.5-flash por ser el modelo oficial, rápido y con mayor cuota gratuita
+        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
+        return response.text, None
+    except Exception as e:
+        error_str = str(e).lower()
+        if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+            return None, "⚠️ *Límite de API alcanzado:* Has superado las peticiones permitidas por minuto de Google. Espera 60 segundos."
+        return None, f"Error de conexión con Gemini: {str(e)}"
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{input_tg_token}/sendMessage"
@@ -47,37 +73,27 @@ def enviar_telegram(mensaje):
 
 @st.cache_data(ttl=15)
 def obtener_mercado():
-    try:
-        response = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=4)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json())
-            df = df[df['symbol'].str.endswith('USDT')].copy()
-            df['lastPrice'] = df['lastPrice'].astype(float)
-            df['priceChangePercent'] = df['priceChangePercent'].astype(float)
-            df['volume'] = df['quoteVolume'].astype(float)
-            df['highPrice'] = df['highPrice'].astype(float)
-            df['lowPrice'] = df['lowPrice'].astype(float)
-            df = df[df['volume'] > 50000].sort_values(by='volume', ascending=False)
-            if not df.empty:
-                return df
-    except Exception:
-        pass
-
-    try:
-        response = requests.get("https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=5)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json())
-            df = df[df['symbol'].str.endswith('USDT')].copy()
-            df['lastPrice'] = df['lastPrice'].astype(float)
-            df['priceChangePercent'] = df['priceChangePercent'].astype(float)
-            df['volume'] = df['quoteVolume'].astype(float)
-            df['highPrice'] = df['highPrice'].astype(float)
-            df['lowPrice'] = df['lowPrice'].astype(float)
-            df = df[df['volume'] > 50000].sort_values(by='volume', ascending=False)
-            if not df.empty:
-                return df
-    except Exception:
-        pass
+    urls_respaldo = [
+        "https://fapi.binance.com/fapi/v1/ticker/24hr",
+        "https://corsproxy.io/?https://fapi.binance.com/fapi/v1/ticker/24hr"
+    ]
+    
+    for url in urls_respaldo:
+        try:
+            response = requests.get(url, timeout=4)
+            if response.status_code == 200:
+                df = pd.DataFrame(response.json())
+                df = df[df['symbol'].str.endswith('USDT')].copy()
+                df['lastPrice'] = df['lastPrice'].astype(float)
+                df['priceChangePercent'] = df['priceChangePercent'].astype(float)
+                df['volume'] = df['quoteVolume'].astype(float)
+                df['highPrice'] = df['highPrice'].astype(float)
+                df['lowPrice'] = df['lowPrice'].astype(float)
+                df = df[df['volume'] > 50000].sort_values(by='volume', ascending=False)
+                if not df.empty:
+                    return df
+        except:
+            continue
 
     try:
         res = requests.get("https://api.coingecko.com/api/v3/coins/markets", params={'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 80}, timeout=6)
@@ -94,15 +110,12 @@ def obtener_mercado():
                 'lowPrice': df_alt['current_price'] * 0.98
             })
             return df_cleaned[df_cleaned['volume'] > 50000].sort_values(by='volume', ascending=False)
-    except Exception:
+    except:
         pass
 
     return pd.DataFrame()
 
 df_mercado = obtener_mercado()
-
-if "posicion_activa" not in st.session_state:
-    st.session_state.posicion_activa = None
 
 if df_mercado.empty:
     st.error("Error al conectar con el mercado de futuros. Por favor, recarga la página.")
@@ -125,7 +138,7 @@ else:
 
         st.subheader(f"📊 Análisis Técnico: {par_sel} ({temporalidad})")
         if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
-            with st.spinner("Procesando análisis con IA..."):
+            with st.spinner("Procesando análisis con IA de forma segura..."):
                 par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
                 Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD. 
@@ -145,18 +158,19 @@ else:
 
                 💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                 """
-                try:
-                    res = client.models.generate_content(model='gemini-3.5-flash', contents=prompt)
-                    senal_manual = res.text
-                    st.markdown(senal_manual)
-
-                    enviado, err = enviar_telegram(senal_manual)
+                
+                # Usamos el escudo anti-spam
+                resultado_ia, error_api = consultar_gemini(prompt)
+                
+                if error_api:
+                    st.error(error_api)
+                else:
+                    st.markdown(resultado_ia)
+                    enviado, err = enviar_telegram(resultado_ia)
                     if enviado:
                         st.toast("¡Señal manual enviada a Telegram!", icon="✅")
                     else:
                         st.error(f"Error enviando a Telegram: {err}")
-                except Exception as e:
-                    st.error(f"Error al conectar con Gemini: {e}")
 
         st.markdown("---")
         st.subheader(f"📈 Gráfica: {par_sel} ({temporalidad})")
@@ -181,6 +195,7 @@ else:
             st.session_state.posicion_activa = None
             st.warning("El bot autónomo ha sido detenido.")
 
+        # MONITOREO DE LA POSICIÓN (Sin gastar API de Gemini)
         if st.session_state.posicion_activa is not None:
             pos = st.session_state.posicion_activa
             st.info(f"🛡️ **Monitoreando posición activa ({temporalidad}):** {pos['activo']} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
@@ -230,7 +245,7 @@ else:
                     st.session_state.posicion_activa = None
 
         if iniciar_bot and st.session_state.posicion_activa is None:
-            with st.spinner("Ejecutando escáner matemático del mercado..."):
+            with st.spinner("Ejecutando escáner matemático del mercado (Ahorrando API)..."):
                 candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 
                 if candidato.empty:
@@ -263,18 +278,19 @@ else:
                     💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                     """
 
-                    try:
-                        response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
-                        senal_generada = response.text
+                    # Usamos el escudo anti-spam
+                    resultado_ia, error_api = consultar_gemini(prompt_pro)
 
-                        nums = re.findall(r"[\d.]+", senal_generada)
-                        
+                    if error_api:
+                        st.error(error_api)
+                    else:
+                        nums = re.findall(r"[\d.]+", resultado_ia)
                         try:
                             entrada_val = float(precio_actual)
                             tp1_val = float(nums[-3]) if len(nums) >= 3 else precio_actual * 1.01
                             tp2_val = float(nums[-2]) if len(nums) >= 2 else precio_actual * 1.02
                             sl_val = float(nums[-1]) if len(nums) >= 1 else precio_actual * 0.99
-                            tipo_sen = "LONG" if "LONG" in senal_generada else "SHORT"
+                            tipo_sen = "LONG" if "LONG" in resultado_ia else "SHORT"
                         except Exception:
                             entrada_val = precio_actual
                             tp1_val = precio_actual * 1.01
@@ -294,12 +310,10 @@ else:
                         }
 
                         st.success(f"¡Bot Autónomo activado! Operación abierta en **{mejor_par['symbol']}**")
-                        st.markdown(senal_generada)
+                        st.markdown(resultado_ia)
 
-                        enviado, err = enviar_telegram(senal_generada)
+                        enviado, err = enviar_telegram(resultado_ia)
                         if enviado:
                             st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
                         else:
                             st.error(f"Error enviando a Telegram: {err}")
-                    except Exception as e:
-                        st.error(f"Error procesando señal con Gemini: {e}")
