@@ -50,7 +50,7 @@ def consultar_gemini(prompt):
     if tiempo_actual - st.session_state.last_api_call < 15:
         return None, "⏳ *Protección Anti-Spam:* Espera al menos 15 segundos entre análisis.", None
     
-    # Lista de modelos en orden de prioridad (Flash es ideal para scalping rápido y cuota gratis)
+    # Lista de modelos en orden de prioridad
     modelos_gratuitos = [
         "gemini-3.5-flash",
         "gemini-2.5-flash",
@@ -62,22 +62,17 @@ def consultar_gemini(prompt):
     st.session_state.last_api_call = tiempo_actual
     ultimo_error = ""
 
-    # El bot prueba los modelos en cascada hasta que uno funcione
     for modelo in modelos_gratuitos:
         try:
             response = client.models.generate_content(model=modelo, contents=prompt)
-            return response.text, None, modelo # Retorna el texto y el modelo que funcionó
+            return response.text, None, modelo 
         except Exception as e:
             error_str = str(e).lower()
-            # Si el error es por límite de cuota (429), detenemos la cascada y avisamos al usuario
             if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
                 return None, "⚠️ *Límite de API alcanzado:* Has superado las peticiones gratuitas. Espera 60 segundos.", None
-            
-            # Si el modelo no existe o no tiene soporte (404 / 400), guardamos el error y probamos el siguiente
             ultimo_error = str(e)
             continue
             
-    # Si falla con todos los modelos de la lista
     return None, f"Error: Ningún modelo gratuito está disponible en tu API Key. Detalle: {ultimo_error}", None
 
 def enviar_telegram(mensaje):
@@ -201,22 +196,29 @@ else:
 
     else:
         st.subheader(f"🤖 Bot Autónomo de Alta Precisión (Monitoreo en Vivo - {temporalidad})")
-        st.markdown(f"El bot analizará el mercado enfocado en operaciones de **{temporalidad}**, abrirá la posición, la reportará a Telegram y monitoreará el precio en tiempo real.")
+        st.markdown(f"Elige la dirección del mercado para que el algoritmo filtre la mejor oportunidad, abra la posición y la envíe a Telegram.")
 
-        col_btn1, col_btn2 = st.columns(2)
+        # --- BOTONES DE DIRECCIÓN PARA EL BOT AUTOMÁTICO ---
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
-            iniciar_bot = st.button("🚀 Iniciar Bot Autónomo")
+            iniciar_long = st.button("🟢 Iniciar Bot (Buscar LONG)")
         with col_btn2:
-            detener_bot = st.button("🛑 Detener Bot")
+            iniciar_short = st.button("🔴 Iniciar Bot (Buscar SHORT)")
+        with col_btn3:
+            detener_bot = st.button("🛑 Detener Bot Actual")
+
+        # Variable para saber qué botón se presionó
+        accion_iniciar = "LONG" if iniciar_long else ("SHORT" if iniciar_short else None)
 
         if detener_bot:
             st.session_state.posicion_activa = None
-            st.warning("El bot autónomo ha sido detenido.")
+            st.warning("El bot autónomo ha sido detenido y la posición cerrada del sistema.")
 
-        # MONITOREO DE LA POSICIÓN (Sin gastar API de Gemini)
+        # MONITOREO DE LA POSICIÓN ACTIVA
         if st.session_state.posicion_activa is not None:
             pos = st.session_state.posicion_activa
-            st.info(f"🛡️ **Monitoreando posición activa ({temporalidad}):** {pos['activo']} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
+            icono_dir = "🟢" if pos['tipo'] == 'LONG' else "🔴"
+            st.info(f"🛡️ **Monitoreando posición activa ({temporalidad}):** {pos['activo']} {icono_dir} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
             
             df_actual = obtener_mercado()
             if not df_actual.empty and pos['activo'] in df_actual['symbol'].values:
@@ -241,7 +243,7 @@ else:
                         enviar_telegram(msg)
                         st.error(msg)
                         st.session_state.posicion_activa = None
-                else:
+                else: # Lógica para monitorear SHORT
                     if precio_actual <= pos['tp2'] and not pos['tp2_alcanzado']:
                         msg = f"🎉 *¡TP2 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio Actual:* `{precio_actual}`"
                         enviar_telegram(msg)
@@ -262,12 +264,20 @@ else:
                 if cumplio_objetivo and pos['tp2_alcanzado']:
                     st.session_state.posicion_activa = None
 
-        if iniciar_bot and st.session_state.posicion_activa is None:
-            with st.spinner("Seleccionando el mejor modelo de IA y escaneando mercado..."):
-                candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
+        # INICIAR NUEVO ANÁLISIS AUTOMÁTICO SEGÚN LA DIRECCIÓN ELEGIDA
+        if accion_iniciar and st.session_state.posicion_activa is None:
+            with st.spinner(f"Escaneando el mercado para operaciones en {accion_iniciar}..."):
+                
+                # Filtrado matemático según la dirección elegida
+                if accion_iniciar == "LONG":
+                    # Busca el mayor volumen con fuerza alcista
+                    candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
+                else:
+                    # Busca el mayor volumen con debilidad estructural o reversión bajista
+                    candidato = df_mercado[df_mercado['priceChangePercent'] < -2.0].sort_values(by='volume', ascending=False)
                 
                 if candidato.empty:
-                    st.warning("No se encontraron activos bajo la estrategia óptima en este ciclo.")
+                    st.warning(f"No se encontraron activos con buenas condiciones para {accion_iniciar} en este ciclo.")
                 else:
                     mejor_par = candidato.iloc[0]
                     par_slash = mejor_par['symbol'].replace("USDT", "/USDT")
@@ -275,17 +285,17 @@ else:
 
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
-                    El escáner matemático ha aislado la siguiente oportunidad de alta precisión:
+                    El escáner matemático ha aislado la siguiente oportunidad para una operación {accion_iniciar}:
                     - Activo a Operar: {mejor_par['symbol']}
                     - Precio Actual: {precio_actual}
                     - Variación 24h: {mejor_par['priceChangePercent']}%
                     - Marco temporal operativo: {temporalidad}
                     
-                    Ajusta los Take Profits y el Stop Loss a la volatilidad esperada para la temporalidad de {temporalidad}.
+                    Desarrolla la estrategia en dirección **{accion_iniciar}**. Ajusta los Take Profits y el Stop Loss a la volatilidad esperada para la temporalidad de {temporalidad}.
                     
                     Genera la señal respetando EXACTAMENTE este formato:
                     🚨 SEÑAL IA BINANCE
-                    Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
+                    Activo: {par_slash} | [{'🟢 LONG' if accion_iniciar == 'LONG' else '🔴 SHORT'}]
                     📊 Mercado: Futuros | ⏱ Temp: {temporalidad}
 
                     📍 Niveles Operativos:
@@ -296,7 +306,6 @@ else:
                     💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                     """
 
-                    # Consultar usando el selector automático de modelos
                     resultado_ia, error_api, modelo_usado = consultar_gemini(prompt_pro)
 
                     if error_api:
@@ -305,17 +314,20 @@ else:
                         nums = re.findall(r"[\d.]+", resultado_ia)
                         try:
                             entrada_val = float(precio_actual)
-                            tp1_val = float(nums[-3]) if len(nums) >= 3 else precio_actual * 1.01
-                            tp2_val = float(nums[-2]) if len(nums) >= 2 else precio_actual * 1.02
-                            sl_val = float(nums[-1]) if len(nums) >= 1 else precio_actual * 0.99
-                            tipo_sen = "LONG" if "LONG" in resultado_ia else "SHORT"
+                            # Extraemos los valores de TP y SL de la respuesta generada
+                            tp1_val = float(nums[-3]) if len(nums) >= 3 else (precio_actual * 1.01 if accion_iniciar == 'LONG' else precio_actual * 0.99)
+                            tp2_val = float(nums[-2]) if len(nums) >= 2 else (precio_actual * 1.02 if accion_iniciar == 'LONG' else precio_actual * 0.98)
+                            sl_val = float(nums[-1]) if len(nums) >= 1 else (precio_actual * 0.99 if accion_iniciar == 'LONG' else precio_actual * 1.01)
+                            tipo_sen = accion_iniciar
                         except Exception:
+                            # Valores por defecto de seguridad si falla el parseo
                             entrada_val = precio_actual
-                            tp1_val = precio_actual * 1.01
-                            tp2_val = precio_actual * 1.02
-                            sl_val = precio_actual * 0.99
-                            tipo_sen = "LONG"
+                            tp1_val = precio_actual * 1.01 if accion_iniciar == 'LONG' else precio_actual * 0.99
+                            tp2_val = precio_actual * 1.02 if accion_iniciar == 'LONG' else precio_actual * 0.98
+                            sl_val = precio_actual * 0.99 if accion_iniciar == 'LONG' else precio_actual * 1.01
+                            tipo_sen = accion_iniciar
 
+                        # Guardamos la posición en memoria para que el sistema la empiece a monitorear
                         st.session_state.posicion_activa = {
                             "activo": mejor_par['symbol'],
                             "tipo": tipo_sen,
@@ -327,7 +339,7 @@ else:
                             "tp2_alcanzado": False
                         }
 
-                        st.success(f"¡Bot activado con el modelo **{modelo_usado}**! Operación abierta en **{mejor_par['symbol']}**")
+                        st.success(f"¡Bot activado en **{accion_iniciar}** usando **{modelo_usado}**! Operación abierta en **{mejor_par['symbol']}**")
                         st.markdown(resultado_ia)
 
                         enviado, err = enviar_telegram(resultado_ia)
