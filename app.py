@@ -13,11 +13,11 @@ DEFAULT_GEMINI_KEY = "AQ.Ab8RN6LUqj-Gvo5BTJkz3QD4iuRsyVEiBUyHY5ECWkQS_6LBJg"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
-# --- INICIALIZACIÓN DE MEMORIA (EVITA ERRORES Y SPAM DE LA API) ---
+# --- INICIALIZACIÓN DE MEMORIA ---
 if "posicion_activa" not in st.session_state:
     st.session_state.posicion_activa = None
 if "last_api_call" not in st.session_state:
-    st.session_state.last_api_call = 0  # Temporizador para evitar agotar la API
+    st.session_state.last_api_call = 0 
 
 # Configuración de la barra lateral para credenciales y parámetros globales
 st.sidebar.header("⚙️ Configuración del Sistema")
@@ -42,25 +42,43 @@ tv_interval = tv_intervals[temporalidad]
 # Inicializar cliente de Gemini
 client = genai.Client(api_key=input_gemini_key)
 
-# --- ESCUDO ANTI-SPAM PARA GEMINI ---
+# --- SELECTOR AUTOMÁTICO DE MODELOS Y ANTI-SPAM ---
 def consultar_gemini(prompt):
-    """Función centralizada para llamar a la IA con protección de límites de API."""
+    """Función que selecciona automáticamente el mejor modelo gratuito disponible."""
     tiempo_actual = time.time()
     
-    # Bloqueo estricto de 15 segundos entre peticiones para no saturar la cuota gratuita
     if tiempo_actual - st.session_state.last_api_call < 15:
-        return None, "⏳ *Protección Anti-Spam activada:* Por favor, espera al menos 15 segundos entre cada análisis para no bloquear tu API Key."
+        return None, "⏳ *Protección Anti-Spam:* Espera al menos 15 segundos entre análisis.", None
     
-    try:
-        st.session_state.last_api_call = tiempo_actual
-        # Se usa gemini-1.5-flash por ser el modelo oficial, rápido y con mayor cuota gratuita
-        response = client.models.generate_content(model='gemini-1.5-flash', contents=prompt)
-        return response.text, None
-    except Exception as e:
-        error_str = str(e).lower()
-        if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-            return None, "⚠️ *Límite de API alcanzado:* Has superado las peticiones permitidas por minuto de Google. Espera 60 segundos."
-        return None, f"Error de conexión con Gemini: {str(e)}"
+    # Lista de modelos en orden de prioridad (Flash es ideal para scalping rápido y cuota gratis)
+    modelos_gratuitos = [
+        "gemini-3.5-flash",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-pro"
+    ]
+    
+    st.session_state.last_api_call = tiempo_actual
+    ultimo_error = ""
+
+    # El bot prueba los modelos en cascada hasta que uno funcione
+    for modelo in modelos_gratuitos:
+        try:
+            response = client.models.generate_content(model=modelo, contents=prompt)
+            return response.text, None, modelo # Retorna el texto y el modelo que funcionó
+        except Exception as e:
+            error_str = str(e).lower()
+            # Si el error es por límite de cuota (429), detenemos la cascada y avisamos al usuario
+            if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                return None, "⚠️ *Límite de API alcanzado:* Has superado las peticiones gratuitas. Espera 60 segundos.", None
+            
+            # Si el modelo no existe o no tiene soporte (404 / 400), guardamos el error y probamos el siguiente
+            ultimo_error = str(e)
+            continue
+            
+    # Si falla con todos los modelos de la lista
+    return None, f"Error: Ningún modelo gratuito está disponible en tu API Key. Detalle: {ultimo_error}", None
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{input_tg_token}/sendMessage"
@@ -138,7 +156,7 @@ else:
 
         st.subheader(f"📊 Análisis Técnico: {par_sel} ({temporalidad})")
         if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
-            with st.spinner("Procesando análisis con IA de forma segura..."):
+            with st.spinner("Buscando el mejor modelo y procesando análisis..."):
                 par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
                 Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD. 
@@ -159,12 +177,12 @@ else:
                 💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                 """
                 
-                # Usamos el escudo anti-spam
-                resultado_ia, error_api = consultar_gemini(prompt)
+                resultado_ia, error_api, modelo_usado = consultar_gemini(prompt)
                 
                 if error_api:
                     st.error(error_api)
                 else:
+                    st.success(f"✅ Análisis completado automáticamente usando el modelo: **{modelo_usado}**")
                     st.markdown(resultado_ia)
                     enviado, err = enviar_telegram(resultado_ia)
                     if enviado:
@@ -245,7 +263,7 @@ else:
                     st.session_state.posicion_activa = None
 
         if iniciar_bot and st.session_state.posicion_activa is None:
-            with st.spinner("Ejecutando escáner matemático del mercado (Ahorrando API)..."):
+            with st.spinner("Seleccionando el mejor modelo de IA y escaneando mercado..."):
                 candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 
                 if candidato.empty:
@@ -278,8 +296,8 @@ else:
                     💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                     """
 
-                    # Usamos el escudo anti-spam
-                    resultado_ia, error_api = consultar_gemini(prompt_pro)
+                    # Consultar usando el selector automático de modelos
+                    resultado_ia, error_api, modelo_usado = consultar_gemini(prompt_pro)
 
                     if error_api:
                         st.error(error_api)
@@ -309,7 +327,7 @@ else:
                             "tp2_alcanzado": False
                         }
 
-                        st.success(f"¡Bot Autónomo activado! Operación abierta en **{mejor_par['symbol']}**")
+                        st.success(f"¡Bot activado con el modelo **{modelo_usado}**! Operación abierta en **{mejor_par['symbol']}**")
                         st.markdown(resultado_ia)
 
                         enviado, err = enviar_telegram(resultado_ia)
