@@ -27,7 +27,7 @@ with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
     input_tg_token = st.text_input("Telegram Bot Token", value=DEFAULT_TG_TOKEN, type="password")
     input_tg_chat = st.text_input("Telegram Chat ID", value=DEFAULT_TG_CHAT)
 
-# Nuevo: Selector de Mercado (Tradicional vs Alpha)
+# Selector de Mercado (Tradicional vs Alpha)
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌐 Mercado a Operar")
 tipo_mercado = st.sidebar.radio(
@@ -179,7 +179,8 @@ ALPHA_FUTURES_SYMBOLS = [
     'JUPUSDT', 'ZETAUSDT', 'STRKUSDT', 'ONDOUSDT', 'MAVIAUSDT', 'BIGTIMEUSDT', 'POLYXUSDT', 
     'METISUSDT', 'BICOUSDT', 'ARKMUSDT', 'PENDLEUSDT', 'SEIUSDT', 'SUIUSDT', 'EDUUSDT', 'IDUSDT',
     'HOOKUSDT', 'GALUSDT', 'LOKAUSDT', 'VOXELUSDT', 'HIGHUSDT', 'LITUSDT', 'SFPUSDT', 'TWTUSDT',
-    'MEWUSDT', 'TURBOUSDT', 'POPCATUSDT', '1000PEPEUSDT', '1000FLOKIUSDT', '1000BONKUSDT'
+    'MEWUSDT', 'TURBOUSDT', 'POPCATUSDT', '1000PEPEUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
+    'CLOUSDT', 'ONUSDT' # <-- Pares nuevos anexados
 ]
 
 df_mercado = obtener_mercado()
