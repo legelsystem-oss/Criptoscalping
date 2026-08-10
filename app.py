@@ -2,16 +2,17 @@ import streamlit as st
 import pandas as pd
 import requests
 from google import genai
+import re
 
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-# Nueva API Key predeterminada configurada
+# API Key y Credenciales predeterminadas
 DEFAULT_GEMINI_KEY = "AQ.Ab8RN6KeBis9-xaK9pTEYP60phvikSdZNXqhsIyYdgH1CKvFXw"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
-# Configuración de la barra lateral para credenciales dinámicas
+# Configuración de la barra lateral para credenciales y parámetros globales
 st.sidebar.header("⚙️ Configuración del Sistema")
 
 with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
@@ -19,7 +20,20 @@ with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
     input_tg_token = st.text_input("Telegram Bot Token", value=DEFAULT_TG_TOKEN, type="password")
     input_tg_chat = st.text_input("Telegram Chat ID", value=DEFAULT_TG_CHAT)
 
-# Inicializar cliente de Gemini con la llave activa
+# Selector de temporalidad global (Afecta a la IA, a Telegram y a la Gráfica)
+st.sidebar.markdown("---")
+st.sidebar.subheader("⏱️ Parámetros de Tiempo")
+temporalidad = st.sidebar.selectbox(
+    "Temporalidad de Análisis:", 
+    ["5m", "15m", "30m", "1h", "4h", "1d"], 
+    index=1 # Por defecto en 15m
+)
+
+# Diccionario para convertir la temporalidad al formato que usa TradingView
+tv_intervals = {"5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D"}
+tv_interval = tv_intervals[temporalidad]
+
+# Inicializar cliente de Gemini
 client = genai.Client(api_key=input_gemini_key)
 
 def enviar_telegram(mensaje):
@@ -96,33 +110,38 @@ else:
     with st.sidebar.expander("Estado de Telegram"):
         st.write(f"Chat ID Actual: {input_tg_chat}")
         if st.button("💬 Probar Conexión"):
-            exito, det = enviar_telegram("🤖 *Prueba de conexión exitosa*")
+            exito, det = enviar_telegram("🤖 *Prueba de conexión exitosa desde CryptoScalp AI*")
             if exito: st.success("¡Enviado!")
             else: st.error(f"Error: {det}")
 
-    modo = st.sidebar.radio("Modo:", ["🎛️ Manual y Gráficos", "🤖 Bot Autónomo con Monitoreo TP/SL"])
+    st.sidebar.markdown("---")
+    modo = st.sidebar.radio("Modo de Operación:", ["🎛️ Manual y Gráficos", "🤖 Bot Autónomo con Monitoreo TP/SL"])
 
     if modo == "🎛️ Manual y Gráficos":
         estrategia = st.sidebar.selectbox("Estrategia:", ["Cruce de Medias (EMA 9/21) + RSI", "Ruptura de Rango y Volumen", "Reversión en Bandas de Bollinger"])
         lista_pares = df_mercado['symbol'].tolist()
-        par_sel = st.sidebar.selectbox("Activo:", options=lista_pares)
+        par_sel = st.sidebar.selectbox("Activo a Operar:", options=lista_pares)
         datos_par = df_mercado[df_mercado['symbol'] == par_sel].iloc[0]
 
-        st.subheader(f"📊 Análisis Técnico: {par_sel}")
+        st.subheader(f"📊 Análisis Técnico: {par_sel} ({temporalidad})")
         if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
             with st.spinner("Procesando análisis con IA..."):
                 par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
-                Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
+                Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD. 
+                - Estrategia: {estrategia}.
+                - Marco temporal: {temporalidad}.
+                Ajusta la amplitud de los Take Profits y el Stop Loss según la temporalidad ({temporalidad}).
+                
                 Genera la respuesta respetando EXACTAMENTE este formato estricto:
                 🚨 SEÑAL IA BINANCE
                 Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
-                📊 Mercado: Futuros | ⏱ Temp: 15m
+                📊 Mercado: Futuros | ⏱ Temp: {temporalidad}
 
                 📍 Niveles Operativos:
-                ➡️ Entrada: [Precio exacto]
-                🎯 TP1: [Valor exacto] | TP2: [Valor exacto]
-                🛡️ SL: [Valor exacto]
+                ➡️ Entrada: [Precio exacto numérico]
+                🎯 TP1: [Valor exacto numérico] | TP2: [Valor exacto numérico]
+                🛡️ SL: [Valor exacto numérico]
 
                 💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                 """
@@ -137,20 +156,20 @@ else:
                     else:
                         st.error(f"Error enviando a Telegram: {err}")
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    st.error(f"Error al conectar con Gemini: {e}")
 
         st.markdown("---")
-        st.subheader(f"📈 Gráfica: {par_sel}")
+        st.subheader(f"📈 Gráfica: {par_sel} ({temporalidad})")
         sim_tv = f"BINANCE:{par_sel}"
         st.components.v1.html(f"""
         <div style="height:500px;width:100%"><div id="tc" style="height:100%;width:100%"></div>
         <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-        <script type="text/javascript">new TradingView.widget({{autosize:true, symbol:"{sim_tv}", interval:"15", timezone:"Etc/UTC", theme:"dark", style:"1", locale:"es", container_id:"tc"}});</script>
+        <script type="text/javascript">new TradingView.widget({{autosize:true, symbol:"{sim_tv}", interval:"{tv_interval}", timezone:"Etc/UTC", theme:"dark", style:"1", locale:"es", container_id:"tc"}});</script>
         </div>""", height=520)
 
     else:
-        st.subheader("🤖 Bot Autónomo de Alta Precisión con Monitoreo en Vivo")
-        st.markdown("El bot analiza el mercado automáticamente con la estrategia óptima, abre la operación, la reporta a Telegram y **monitorea el precio en tiempo real para avisarte cuando se alcance el TP1, TP2 o Stop Loss**.")
+        st.subheader(f"🤖 Bot Autónomo de Alta Precisión (Monitoreo en Vivo - {temporalidad})")
+        st.markdown(f"El bot analizará el mercado enfocado en operaciones de **{temporalidad}**, abrirá la posición, la reportará a Telegram y monitoreará el precio en tiempo real.")
 
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
@@ -164,7 +183,7 @@ else:
 
         if st.session_state.posicion_activa is not None:
             pos = st.session_state.posicion_activa
-            st.info(f"🛡️ **Monitoreando posición activa:** {pos['activo']} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
+            st.info(f"🛡️ **Monitoreando posición activa ({temporalidad}):** {pos['activo']} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
             
             df_actual = obtener_mercado()
             if not df_actual.empty and pos['activo'] in df_actual['symbol'].values:
@@ -211,7 +230,7 @@ else:
                     st.session_state.posicion_activa = None
 
         if iniciar_bot and st.session_state.posicion_activa is None:
-            with st.spinner("Ejecutando análisis automático del mercado de futuros..."):
+            with st.spinner("Ejecutando escáner matemático del mercado..."):
                 candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 
                 if candidato.empty:
@@ -223,58 +242,66 @@ else:
 
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
-                    Selecciona los parámetros óptimos para la estrategia de Breakout de Alto Volumen en el activo:
-                    - Activo: {mejor_par['symbol']}
+                    El escáner matemático ha aislado la siguiente oportunidad de alta precisión:
+                    - Activo a Operar: {mejor_par['symbol']}
                     - Precio Actual: {precio_actual}
                     - Variación 24h: {mejor_par['priceChangePercent']}%
+                    - Marco temporal operativo: {temporalidad}
+                    
+                    Ajusta los Take Profits y el Stop Loss a la volatilidad esperada para la temporalidad de {temporalidad}.
                     
                     Genera la señal respetando EXACTAMENTE este formato:
                     🚨 SEÑAL IA BINANCE
                     Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
-                    📊 Mercado: Futuros | ⏱ Temp: 15m
+                    📊 Mercado: Futuros | ⏱ Temp: {temporalidad}
 
                     📍 Niveles Operativos:
-                    ➡️ Entrada: [Precio exacto numérico]
+                    ➡️ Entrada: {precio_actual}
                     🎯 TP1: [Valor exacto numérico] | TP2: [Valor exacto numérico]
                     🛡️ SL: [Valor exacto numérico]
 
                     💡 Análisis: [Explicación ultracorta y directa en 1 sola línea del porqué]
                     """
 
-                    response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
-                    senal_generada = response.text
-
-                    import re
-                    nums = re.findall(r"[\d.]+", senal_generada)
                     try:
-                        entrada_val = float(nums[0]) if len(nums) > 0 else precio_actual
-                        tp1_val = float(nums[1]) if len(nums) > 1 else precio_actual * 1.01
-                        tp2_val = float(nums[2]) if len(nums) > 2 else precio_actual * 1.02
-                        sl_val = float(nums[3]) if len(nums) > 3 else precio_actual * 0.99
-                        tipo_sen = "LONG" if "LONG" in senal_generada else "SHORT"
-                    except Exception:
-                        entrada_val = precio_actual
-                        tp1_val = precio_actual * 1.01
-                        tp2_val = precio_actual * 1.02
-                        sl_val = precio_actual * 0.99
-                        tipo_sen = "LONG"
+                        response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
+                        senal_generada = response.text
 
-                    st.session_state.posicion_activa = {
-                        "activo": mejor_par['symbol'],
-                        "tipo": tipo_sen,
-                        "entrada": entrada_val,
-                        "tp1": tp1_val,
-                        "tp2": tp2_val,
-                        "sl": sl_val,
-                        "tp1_alcanzado": False,
-                        "tp2_alcanzado": False
-                    }
+                        nums = re.findall(r"[\d.]+", senal_generada)
+                        
+                        try:
+                            # Aseguramos extraer los últimos números del reporte correspondientes a TP y SL
+                            entrada_val = float(precio_actual)
+                            # Extraemos asumiendo el formato estricto: Entrada, TP1, TP2, SL
+                            tp1_val = float(nums[-3]) if len(nums) >= 3 else precio_actual * 1.01
+                            tp2_val = float(nums[-2]) if len(nums) >= 2 else precio_actual * 1.02
+                            sl_val = float(nums[-1]) if len(nums) >= 1 else precio_actual * 0.99
+                            tipo_sen = "LONG" if "LONG" in senal_generada else "SHORT"
+                        except Exception:
+                            entrada_val = precio_actual
+                            tp1_val = precio_actual * 1.01
+                            tp2_val = precio_actual * 1.02
+                            sl_val = precio_actual * 0.99
+                            tipo_sen = "LONG"
 
-                    st.success(f"¡Bot Autónomo activado! Operación abierta en **{mejor_par['symbol']}**")
-                    st.markdown(senal_generada)
+                        st.session_state.posicion_activa = {
+                            "activo": mejor_par['symbol'],
+                            "tipo": tipo_sen,
+                            "entrada": entrada_val,
+                            "tp1": tp1_val,
+                            "tp2": tp2_val,
+                            "sl": sl_val,
+                            "tp1_alcanzado": False,
+                            "tp2_alcanzado": False
+                        }
 
-                    enviado, err = enviar_telegram(senal_generada)
-                    if enviado:
-                        st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
-                    else:
-                        st.error(f"Error enviando a Telegram: {err}")
+                        st.success(f"¡Bot Autónomo activado! Operación abierta en **{mejor_par['symbol']}**")
+                        st.markdown(senal_generada)
+
+                        enviado, err = enviar_telegram(senal_generada)
+                        if enviado:
+                            st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
+                        else:
+                            st.error(f"Error enviando a Telegram: {err}")
+                    except Exception as e:
+                        st.error(f"Error procesando señal con Gemini: {e}")
