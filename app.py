@@ -8,8 +8,8 @@ import re
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-# API Key predeterminada
-DEFAULT_GEMINI_KEY = "AQ.Ab8RN6LUqj-Gvo5BTJkz3QD4iuRsyVEiBUyHY5ECWkQS_6LBJg"
+# API Key actualizada
+DEFAULT_GEMINI_KEY = "AQ.Ab8RN6Jjk1BAF4lb0u00J_0cb-nRMEj0MHGHggm5WxVBgwiNgA"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
@@ -180,7 +180,7 @@ ALPHA_FUTURES_SYMBOLS = [
     'METISUSDT', 'BICOUSDT', 'ARKMUSDT', 'PENDLEUSDT', 'SEIUSDT', 'SUIUSDT', 'EDUUSDT', 'IDUSDT',
     'HOOKUSDT', 'GALUSDT', 'LOKAUSDT', 'VOXELUSDT', 'HIGHUSDT', 'LITUSDT', 'SFPUSDT', 'TWTUSDT',
     'MEWUSDT', 'TURBOUSDT', 'POPCATUSDT', '1000PEPEUSDT', '1000FLOKIUSDT', '1000BONKUSDT',
-    'CLOUSDT', 'ONUSDT' # <-- Pares nuevos anexados
+    'CLOUSDT', 'ONUSDT'
 ]
 
 df_mercado = obtener_mercado()
