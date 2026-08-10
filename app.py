@@ -1,22 +1,30 @@
 import streamlit as st
 import pandas as pd
 import requests
-import time
-from datetime import datetime
 from google import genai
 
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-API_KEY = "AQ.Ab8RN6IUU1HCyoTBJvilfLLEVH95L9oDAsukinvSs2yE28IVHQ"
-client = genai.Client(api_key=API_KEY)
+# Nueva API Key predeterminada configurada
+DEFAULT_GEMINI_KEY = "AQ.Ab8RN6KeBis9-xaK9pTEYP60phvikSdZNXqhsIyYdgH1CKvFXw"
+DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
+DEFAULT_TG_CHAT = "1690783827"
 
-TELEGRAM_BOT_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
-TELEGRAM_CHAT_ID = "1690783827"
+# Configuración de la barra lateral para credenciales dinámicas
+st.sidebar.header("⚙️ Configuración del Sistema")
+
+with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
+    input_gemini_key = st.text_input("Gemini API Key", value=DEFAULT_GEMINI_KEY, type="password")
+    input_tg_token = st.text_input("Telegram Bot Token", value=DEFAULT_TG_TOKEN, type="password")
+    input_tg_chat = st.text_input("Telegram Chat ID", value=DEFAULT_TG_CHAT)
+
+# Inicializar cliente de Gemini con la llave activa
+client = genai.Client(api_key=input_gemini_key)
 
 def enviar_telegram(mensaje):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": mensaje, "parse_mode": "Markdown"}
+    url = f"https://api.telegram.org/bot{input_tg_token}/sendMessage"
+    payload = {"chat_id": input_tg_chat, "text": mensaje, "parse_mode": "Markdown"}
     try:
         response = requests.post(url, json=payload, timeout=10)
         return response.status_code == 200, response.text
@@ -79,17 +87,14 @@ def obtener_mercado():
 
 df_mercado = obtener_mercado()
 
-# Inicializar estado en sesión para rastrear posiciones activas y evitar uso excesivo de API
 if "posicion_activa" not in st.session_state:
     st.session_state.posicion_activa = None
 
 if df_mercado.empty:
     st.error("Error al conectar con el mercado de futuros. Por favor, recarga la página.")
 else:
-    st.sidebar.header("⚙️ Configuración del Sistema")
-    
     with st.sidebar.expander("Estado de Telegram"):
-        st.write("Estado: Conectado (Chat ID: 1690783827)")
+        st.write(f"Chat ID Actual: {input_tg_chat}")
         if st.button("💬 Probar Conexión"):
             exito, det = enviar_telegram("🤖 *Prueba de conexión exitosa*")
             if exito: st.success("¡Enviado!")
@@ -109,7 +114,7 @@ else:
                 par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
                 Actúa como trader institucional experto. Analiza el activo {par_sel}: Precio {datos_par['lastPrice']}, Cambio 24h {datos_par['priceChangePercent']}%, Volumen {datos_par['volume']} USD, Rango [{datos_par['lowPrice']} - {datos_par['highPrice']}]. Estrategia: {estrategia}.
-                Genera la respuesta respetando EXACTAMENTE este formato:
+                Genera la respuesta respetando EXACTAMENTE este formato estricto:
                 🚨 SEÑAL IA BINANCE
                 Activo: {par_slash} | [🟢 LONG o 🔴 SHORT]
                 📊 Mercado: Futuros | ⏱ Temp: 15m
@@ -145,10 +150,8 @@ else:
 
     else:
         st.subheader("🤖 Bot Autónomo de Alta Precisión con Monitoreo en Vivo")
-        st.markdown("El bot analiza el mercado automáticamente con la estrategia óptima de Momentum, abre la operación, la reporta a Telegram y **monitorea el precio en tiempo real para avisarte cuando se alcance el TP1, TP2 o Stop Loss**, evitando agotar las consultas de la API de Gemini.")
+        st.markdown("El bot analiza el mercado automáticamente con la estrategia óptima, abre la operación, la reporta a Telegram y **monitorea el precio en tiempo real para avisarte cuando se alcance el TP1, TP2 o Stop Loss**.")
 
-        intervalo_minutos = st.slider("Frecuencia de análisis automático (minutos):", 1, 30, 5)
-        
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
             iniciar_bot = st.button("🚀 Iniciar Bot Autónomo")
@@ -159,18 +162,15 @@ else:
             st.session_state.posicion_activa = None
             st.warning("El bot autónomo ha sido detenido.")
 
-        # Si hay una posición activa, realizamos el monitoreo continuo sin gastar tokens de Gemini
         if st.session_state.posicion_activa is not None:
             pos = st.session_state.posicion_activa
             st.info(f"🛡️ **Monitoreando posición activa:** {pos['activo']} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
             
-            # Obtener precio actual fresco del mercado
             df_actual = obtener_mercado()
             if not df_actual.empty and pos['activo'] in df_actual['symbol'].values:
                 precio_actual = float(df_actual[df_actual['symbol'] == pos['activo']]['lastPrice'].values[0])
                 st.metric(label=f"Precio en vivo de {pos['activo']}", value=f"${precio_actual:,.4f}")
 
-                # Lógica de evaluación de TP / SL
                 cumplio_objetivo = False
                 if pos['tipo'] == 'LONG':
                     if precio_actual >= pos['tp2'] and not pos['tp2_alcanzado']:
@@ -188,8 +188,8 @@ else:
                         msg = f"❌ *¡STOP LOSS TOCADO!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó el límite de protección.\n📉 *Precio Actual:* `{precio_actual}`"
                         enviar_telegram(msg)
                         st.error(msg)
-                        st.session_state.posicion_activa = None # Cerrar posición
-                else: # SHORT
+                        st.session_state.posicion_activa = None
+                else:
                     if precio_actual <= pos['tp2'] and not pos['tp2_alcanzado']:
                         msg = f"🎉 *¡TP2 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio Actual:* `{precio_actual}`"
                         enviar_telegram(msg)
@@ -205,14 +205,13 @@ else:
                         msg = f"❌ *¡STOP LOSS TOCADO (SHORT)!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó el límite de protección.\n📉 *Precio Actual:* `{precio_actual}`"
                         enviar_telegram(msg)
                         st.error(msg)
-                        st.session_state.posicion_activa = None # Cerrar posición
+                        st.session_state.posicion_activa = None
 
                 if cumplio_objetivo and pos['tp2_alcanzado']:
-                    st.session_state.posicion_activa = None # Cerrar posición al completar TP2
+                    st.session_state.posicion_activa = None
 
         if iniciar_bot and st.session_state.posicion_activa is None:
             with st.spinner("Ejecutando análisis automático del mercado de futuros..."):
-                # Filtrar la mejor oportunidad usando Momentum (Estrategia óptima para scalping automático)
                 candidato = df_mercado[(df_mercado['priceChangePercent'] > 2.0) & (df_mercado['priceChangePercent'] < 15.0)].sort_values(by='volume', ascending=False)
                 
                 if candidato.empty:
@@ -222,7 +221,6 @@ else:
                     par_slash = mejor_par['symbol'].replace("USDT", "/USDT")
                     precio_actual = float(mejor_par['lastPrice'])
 
-                    # Consulta a Gemini optimizada (1 sola vez por ciclo de apertura)
                     prompt_pro = f"""
                     Actúa como un algoritmo cuantitativo institucional y trader experto en futuros de criptomonedas.
                     Selecciona los parámetros óptimos para la estrategia de Breakout de Alto Volumen en el activo:
@@ -246,11 +244,9 @@ else:
                     response = client.models.generate_content(model='gemini-3.5-flash', contents=prompt_pro)
                     senal_generada = response.text
 
-                    # Extracción matemática segura de los valores numéricos de la respuesta para el monitoreo local
                     import re
                     nums = re.findall(r"[\d.]+", senal_generada)
                     try:
-                        # Parseo inteligente de los números devueltos por la IA
                         entrada_val = float(nums[0]) if len(nums) > 0 else precio_actual
                         tp1_val = float(nums[1]) if len(nums) > 1 else precio_actual * 1.01
                         tp2_val = float(nums[2]) if len(nums) > 2 else precio_actual * 1.02
@@ -263,7 +259,6 @@ else:
                         sl_val = precio_actual * 0.99
                         tipo_sen = "LONG"
 
-                    # Guardar en memoria de sesión para el monitoreo autónomo
                     st.session_state.posicion_activa = {
                         "activo": mejor_par['symbol'],
                         "tipo": tipo_sen,
