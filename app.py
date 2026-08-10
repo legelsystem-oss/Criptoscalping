@@ -7,8 +7,8 @@ import re
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
 
-# API Key y Credenciales predeterminadas
-DEFAULT_GEMINI_KEY = "AQ.Ab8RN6KeBis9-xaK9pTEYP60phvikSdZNXqhsIyYdgH1CKvFXw"
+# API Key actualizada (NOTA: Si da error 401, necesitas generar una que empiece por AIza...)
+DEFAULT_GEMINI_KEY = "AQ.Ab8RN6LP-qqUiidP_YXUNXWdJ5dpVzLSfFDtR2c8GPxyR-pvIg"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
@@ -270,9 +270,7 @@ else:
                         nums = re.findall(r"[\d.]+", senal_generada)
                         
                         try:
-                            # Aseguramos extraer los últimos números del reporte correspondientes a TP y SL
                             entrada_val = float(precio_actual)
-                            # Extraemos asumiendo el formato estricto: Entrada, TP1, TP2, SL
                             tp1_val = float(nums[-3]) if len(nums) >= 3 else precio_actual * 1.01
                             tp2_val = float(nums[-2]) if len(nums) >= 2 else precio_actual * 1.02
                             sl_val = float(nums[-1]) if len(nums) >= 1 else precio_actual * 0.99
