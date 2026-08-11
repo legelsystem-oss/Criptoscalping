@@ -11,7 +11,7 @@ import threading
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
 st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo WSS & Telegram")
 
-# API Key y Tokens (Recomendación: Mover a st.secrets si el repo es público)
+# API Key y Tokens
 DEFAULT_GEMINI_KEY = "AQ.Ab8RN6Jjk1BAF4lb0u00J_0cb-nRMEj0MHGHggm5WxVBgwiNgA"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
@@ -116,12 +116,15 @@ tv_interval = tv_intervals[temporalidad]
 
 client = genai.Client(api_key=input_gemini_key)
 
+# --- MOTOR CORREGIDO IA ---
 def consultar_gemini(prompt):
     tiempo_actual = time.time()
     if tiempo_actual - st.session_state.last_api_call < 15:
         return None, "⏳ *Protección Anti-Spam:* Espera al menos 15 segundos entre análisis.", None
     
-    modelos_gratuitos = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+    # Modelos vigentes y estables (Soluciona el Error 404)
+    modelos_gratuitos = ["gemini-1.5-flash", "gemini-1.5-pro"]
+    
     st.session_state.last_api_call = tiempo_actual
     ultimo_error = ""
 
@@ -136,7 +139,7 @@ def consultar_gemini(prompt):
             ultimo_error = str(e)
             continue
             
-    return None, f"Error: Ningún modelo disponible en tu API Key. Detalle: {ultimo_error}", None
+    return None, f"Error real de conexión con la IA. Detalle: {ultimo_error}", None
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{input_tg_token}/sendMessage"
@@ -147,10 +150,10 @@ def enviar_telegram(mensaje):
     except Exception as e:
         return False, str(e)
 
+# --- CONEXIÓN ROBUSTA AL MERCADO ---
 @st.cache_data(ttl=15)
 def obtener_mercado():
     try:
-        # Aumentamos el timeout para evitar cortes en servidores gratuitos
         response = requests.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=10)
         if response.status_code == 200:
             df = pd.DataFrame(response.json())
@@ -266,7 +269,7 @@ else:
     st.sidebar.markdown("---")
     modo = st.sidebar.radio("Modo de Operación:", ["🎛️ Manual PRO y Gráficos", "🤖 Bot Autónomo con Monitoreo TP/SL"])
 
-    # --- SECCIÓN 1: MANUAL PRO ---
+    # --- SECCIÓN 1: MANUAL PRO (Mantenida intacta como solicitaste) ---
     if modo == "🎛️ Manual PRO y Gráficos":
         estrategia = st.sidebar.selectbox("Estrategia:", ["Cruce de Medias (EMA 9/21) + RSI", "Ruptura de Rango (ATR) y Volumen", "Reversión en Bandas de Bollinger"])
         lista_pares = df_mercado['symbol'].tolist()
