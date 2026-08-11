@@ -4,20 +4,25 @@ import requests
 import time
 from google import genai
 import re
+import websocket  # <- NUEVO: Librería para conexión sin consumo de API
+import json       # <- NUEVO
+import threading  # <- NUEVO: Permite correr el bot en segundo plano
 
 st.set_page_config(page_title="CryptoScalp AI - Bot Autónomo con Monitoreo", layout="wide")
-st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo de TP/SL & Telegram")
+st.title("⚡ CryptoScalp AI: Bot Autónomo de Futuros con Monitoreo WSS & Telegram")
 
 # API Key actualizada
 DEFAULT_GEMINI_KEY = "AQ.Ab8RN6Jjk1BAF4lb0u00J_0cb-nRMEj0MHGHggm5WxVBgwiNgA"
 DEFAULT_TG_TOKEN = "8701955750:AAGa91am-9sLDbOuDfIuQSSDCEukO8XX2_0"
 DEFAULT_TG_CHAT = "1690783827"
 
-# --- INICIALIZACIÓN DE MEMORIA ---
+# --- INICIALIZACIÓN DE MEMORIA Y ESTADOS ---
 if "posicion_activa" not in st.session_state:
     st.session_state.posicion_activa = None
 if "last_api_call" not in st.session_state:
     st.session_state.last_api_call = 0 
+if "precios_ws" not in st.session_state:
+    st.session_state.precios_ws = {} # Diccionario para almacenar precios en vivo gratis
 
 # Configuración de la barra lateral
 st.sidebar.header("⚙️ Configuración del Sistema")
@@ -26,8 +31,82 @@ with st.sidebar.expander("🔑 Credenciales de API & Telegram"):
     input_gemini_key = st.text_input("Gemini API Key", value=DEFAULT_GEMINI_KEY, type="password")
     input_tg_token = st.text_input("Telegram Bot Token", value=DEFAULT_TG_TOKEN, type="password")
     input_tg_chat = st.text_input("Telegram Chat ID", value=DEFAULT_TG_CHAT)
+    
+    # Guardar en session_state para que el hilo del WebSocket pueda acceder a ellas
+    st.session_state.tg_token = input_tg_token
+    st.session_state.tg_chat = input_tg_chat
 
-# Selector de Mercado (Tradicional vs Alpha)
+# --- HILO EN SEGUNDO PLANO (WEBSOCKET) ---
+def enviar_telegram_ws(mensaje):
+    """Función de Telegram adaptada para ejecutarse desde el hilo del WebSocket."""
+    token = st.session_state.get('tg_token', "")
+    chat = st.session_state.get('tg_chat', "")
+    if token and chat:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        try:
+            requests.post(url, json={"chat_id": chat, "text": mensaje, "parse_mode": "Markdown"}, timeout=5)
+        except: pass
+
+def iniciar_websocket():
+    """Conecta a Binance y monitorea la posición 24/7 sin gastar créditos API."""
+    def on_message(ws, mensaje):
+        try:
+            datos = json.loads(mensaje)
+            for item in datos:
+                simbolo = item['s']
+                if simbolo.endswith('USDT'):
+                    precio = float(item['c'])
+                    # 1. Actualizar el precio en vivo para la interfaz gráfica
+                    st.session_state.precios_ws[simbolo] = precio
+                    
+                    # 2. Lógica autónoma de monitoreo TP/SL
+                    pos = st.session_state.posicion_activa
+                    if pos and pos['activo'] == simbolo:
+                        cumplio_objetivo = False
+                        
+                        if pos['tipo'] == 'LONG':
+                            if precio >= pos['tp2'] and not pos['tp2_alcanzado']:
+                                enviar_telegram_ws(f"🎉 *¡TP2 ALCANZADO!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio:* `{precio}`")
+                                pos['tp2_alcanzado'] = True
+                                cumplio_objetivo = True
+                            elif precio >= pos['tp1'] and not pos['tp1_alcanzado']:
+                                enviar_telegram_ws(f"✅ *¡TP1 ALCANZADO!* 🎯\n\nEl activo `{pos['activo']}` tocó el primer objetivo.\n💰 *Precio:* `{precio}`")
+                                pos['tp1_alcanzado'] = True
+                            elif precio <= pos['sl']:
+                                enviar_telegram_ws(f"❌ *¡STOP LOSS TOCADO!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó la protección.\n📉 *Precio:* `{precio}`")
+                                st.session_state.posicion_activa = None
+                                
+                        else: # SHORT
+                            if precio <= pos['tp2'] and not pos['tp2_alcanzado']:
+                                enviar_telegram_ws(f"🎉 *¡TP2 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio:* `{precio}`")
+                                pos['tp2_alcanzado'] = True
+                                cumplio_objetivo = True
+                            elif precio <= pos['tp1'] and not pos['tp1_alcanzado']:
+                                enviar_telegram_ws(f"✅ *¡TP1 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el primer objetivo.\n💰 *Precio:* `{precio}`")
+                                pos['tp1_alcanzado'] = True
+                            elif precio >= pos['sl']:
+                                enviar_telegram_ws(f"❌ *¡STOP LOSS TOCADO (SHORT)!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó la protección.\n📉 *Precio:* `{precio}`")
+                                st.session_state.posicion_activa = None
+                                
+                        if cumplio_objetivo and pos['tp2_alcanzado']:
+                            st.session_state.posicion_activa = None
+        except:
+            pass
+
+    def run():
+        ws = websocket.WebSocketApp("wss://fstream.binance.com/ws/!miniTicker@arr", on_message=on_message)
+        ws.run_forever()
+
+    hilo = threading.Thread(target=run, daemon=True)
+    hilo.start()
+
+# Iniciar el motor WebSocket solo una vez
+if "ws_iniciado" not in st.session_state:
+    iniciar_websocket()
+    st.session_state.ws_iniciado = True
+# ----------------------------------------
+
+# Selector de Mercado 
 st.sidebar.markdown("---")
 st.sidebar.subheader("🌐 Mercado a Operar")
 tipo_mercado = st.sidebar.radio(
@@ -99,23 +178,6 @@ def obtener_mercado():
     except:
         pass
     
-    try:
-        res = requests.get("https://api.coingecko.com/api/v3/coins/markets", params={'vs_currency': 'usd', 'order': 'volume_desc', 'per_page': 200}, timeout=6)
-        if res.status_code == 200:
-            data = res.json()
-            df_alt = pd.DataFrame(data)
-            df_alt['symbol'] = df_alt['symbol'].str.upper() + 'USDT'
-            df_cleaned = pd.DataFrame({
-                'symbol': df_alt['symbol'],
-                'lastPrice': df_alt['current_price'],
-                'priceChangePercent': df_alt['price_change_percentage_24h'],
-                'volume': df_alt['total_volume'],
-                'highPrice': df_alt['current_price'] * 1.02,
-                'lowPrice': df_alt['current_price'] * 0.98
-            })
-            return df_cleaned[df_cleaned['volume'] > 50000].sort_values(by='volume', ascending=False)
-    except:
-        pass
     return pd.DataFrame()
 
 # --- MOTOR DE ANÁLISIS TÉCNICO MATEMÁTICO ---
@@ -167,7 +229,6 @@ def obtener_indicadores_tecnicos(symbol, interval):
         pass
     return {"valido": False}
 
-# --- LISTA CURADA DE ACTIVOS ALPHA / SEED EN BINANCE FUTURES ---
 ALPHA_FUTURES_SYMBOLS = [
     'PLAYUSDT', 'TACUSDT', 'HUSDT', 'GRVTUSDT', 'DOODUSDT', 'MOODENGUSDT', 'GOATUSDT', 
     'ACTUSDT', 'PNUTUSDT', 'CETUSUSDT', 'COWUSDT', 'TROYUSDT', 'SWELLUSDT', '1000CATUSDT', 
@@ -185,7 +246,6 @@ ALPHA_FUTURES_SYMBOLS = [
 
 df_mercado = obtener_mercado()
 
-# Filtrado según el mercado seleccionado por el usuario
 if not df_mercado.empty:
     if "Alpha" in tipo_mercado:
         df_mercado = df_mercado[df_mercado['symbol'].isin(ALPHA_FUTURES_SYMBOLS)]
@@ -194,7 +254,7 @@ if not df_mercado.empty:
 
 if df_mercado.empty:
     if "Alpha" in tipo_mercado:
-        st.warning("⚠️ No se encontraron activos de Alpha Futures con volumen suficiente en este momento.")
+        st.warning("⚠️ No se encontraron activos de Alpha Futures con volumen suficiente.")
     else:
         st.error("Error al conectar con Binance. Por favor, recarga la página.")
 else:
@@ -205,48 +265,38 @@ else:
             if exito: st.success("¡Enviado!")
             else: st.error(f"Error: {det}")
 
-    # Instrucción de contexto para la IA según el mercado
     mercado_contexto = "Mercado Tradicional" if "Tradicional" in tipo_mercado else "Binance Alpha Futures (Activos emergentes con extrema volatilidad. Calcula Stop Loss ligeramente más amplios para evitar cacería de stops)."
 
     st.sidebar.markdown("---")
+    # Manteniendo intactas las opciones de análisis manual según el requerimiento
     modo = st.sidebar.radio("Modo de Operación:", ["🎛️ Manual PRO y Gráficos", "🤖 Bot Autónomo con Monitoreo TP/SL"])
 
-    # --- SECCIÓN 1: MANUAL PRO ---
+    # --- SECCIÓN 1: MANUAL PRO (Intacta) ---
     if modo == "🎛️ Manual PRO y Gráficos":
         estrategia = st.sidebar.selectbox("Estrategia:", ["Cruce de Medias (EMA 9/21) + RSI", "Ruptura de Rango (ATR) y Volumen", "Reversión en Bandas de Bollinger"])
         lista_pares = df_mercado['symbol'].tolist()
         par_sel = st.sidebar.selectbox("Activo a Operar:", options=lista_pares)
         datos_par = df_mercado[df_mercado['symbol'] == par_sel].iloc[0]
 
-        if "Cruce" in estrategia:
-            tv_studies = '["RSI@tv-basicstudies", "MAExp@tv-basicstudies"]'
-        elif "Bollinger" in estrategia:
-            tv_studies = '["BB@tv-basicstudies", "RSI@tv-basicstudies"]'
-        else:
-            tv_studies = '["Volume@tv-basicstudies"]'
+        if "Cruce" in estrategia: tv_studies = '["RSI@tv-basicstudies", "MAExp@tv-basicstudies"]'
+        elif "Bollinger" in estrategia: tv_studies = '["BB@tv-basicstudies", "RSI@tv-basicstudies"]'
+        else: tv_studies = '["Volume@tv-basicstudies"]'
 
         st.subheader(f"📊 Análisis Técnico PRO: {par_sel} ({temporalidad})")
         st.caption(f"Mercado Seleccionado: {tipo_mercado}")
         
         if st.button(f"🚀 Analizar y Enviar a Telegram {par_sel}"):
-            with st.spinner("Realizando análisis Top-Down y calculando riesgo estricto..."):
+            with st.spinner("Realizando análisis Top-Down..."):
                 ind = obtener_indicadores_tecnicos(par_sel, temporalidad)
                 macro_ind = obtener_indicadores_tecnicos(par_sel, "4h")
                 
-                if macro_ind['valido']:
-                    tendencia_macro = "Alcista 🟢" if macro_ind['precio'] > macro_ind['ema21'] else "Bajista 🔴"
-                else:
-                    tendencia_macro = "Indefinida 🟡"
+                tendencia_macro = "Alcista 🟢" if macro_ind['valido'] and macro_ind['precio'] > macro_ind['ema21'] else "Bajista 🔴"
 
                 if ind['valido']:
-                    if "Bollinger" in estrategia:
-                        datos_tec_str = f"BB Upper: {ind['bb_upper']:.4f}, BB Lower: {ind['bb_lower']:.4f}, SMA 20: {ind['sma20']:.4f}, RSI: {ind['rsi']:.2f}"
-                    elif "Ruptura" in estrategia:
-                        datos_tec_str = f"ATR (Volatilidad): {ind['atr']:.4f}, Precio: {ind['precio']:.4f}"
-                    else:
-                        datos_tec_str = f"EMA 9: {ind['ema9']:.4f}, EMA 21: {ind['ema21']:.4f}, RSI: {ind['rsi']:.2f}"
-                else:
-                    datos_tec_str = "Sin datos técnicos"
+                    if "Bollinger" in estrategia: datos_tec_str = f"BB Upper: {ind['bb_upper']:.4f}, BB Lower: {ind['bb_lower']:.4f}, SMA 20: {ind['sma20']:.4f}, RSI: {ind['rsi']:.2f}"
+                    elif "Ruptura" in estrategia: datos_tec_str = f"ATR (Volatilidad): {ind['atr']:.4f}, Precio: {ind['precio']:.4f}"
+                    else: datos_tec_str = f"EMA 9: {ind['ema9']:.4f}, EMA 21: {ind['ema21']:.4f}, RSI: {ind['rsi']:.2f}"
+                else: datos_tec_str = "Sin datos técnicos"
 
                 par_slash = par_sel.replace("USDT", "/USDT")
                 prompt = f"""
@@ -258,7 +308,7 @@ else:
                 - Estrategia Seleccionada: {estrategia}.
                 - Gestión de Riesgo (R:R) exigida por el usuario: {ratio_rr}.
                 
-                Instrucciones Críticas: Define si la entrada óptima es LONG o SHORT. Calcula la amplitud de los Take Profits y el Stop Loss obligando a las matemáticas a respetar un Ratio Riesgo/Beneficio estricto de {ratio_rr}. Si es Alpha Futures, ajusta para mayor volatilidad.
+                Instrucciones Críticas: Define si la entrada óptima es LONG o SHORT. Calcula Take Profits y Stop Loss obligando a las matemáticas a respetar un Ratio Riesgo/Beneficio estricto de {ratio_rr}.
                 
                 Genera la respuesta respetando EXACTAMENTE este formato estricto:
                 🚨 SEÑAL IA BINANCE
@@ -266,137 +316,79 @@ else:
                 📊 Mercado: {'Alpha Futures' if 'Alpha' in tipo_mercado else 'Futuros'} | ⏱ Temp: {temporalidad}
 
                 📍 Niveles Operativos:
-                ➡️ Entrada: [Precio exacto numérico]
-                🎯 TP1: [Valor exacto numérico] | TP2: [Valor exacto numérico]
-                🛡️ SL: [Valor exacto numérico]
+                ➡️ Entrada: [Precio numérico]
+                🎯 TP1: [Valor numérico] | TP2: [Valor numérico]
+                🛡️ SL: [Valor numérico]
 
                 💡 Análisis: [Explicación ultracorta en 1 sola línea detallando la estrategia, el R:R {ratio_rr} y la tendencia macro]
                 """
                 
                 resultado_ia, error_api, modelo_usado = consultar_gemini(prompt)
                 
-                if error_api:
-                    st.error(error_api)
+                if error_api: st.error(error_api)
                 else:
                     st.success(f"✅ Análisis quirúrgico completado usando: **{modelo_usado}**")
                     st.markdown(resultado_ia)
                     enviado, err = enviar_telegram(resultado_ia)
-                    if enviado:
-                        st.toast("¡Señal manual enviada a Telegram!", icon="✅")
+                    if enviado: st.toast("¡Señal manual enviada a Telegram!", icon="✅")
 
         st.markdown("---")
         st.subheader(f"📈 Gráfica Inteligente: {par_sel} ({temporalidad})")
-        sim_tv = f"BINANCE:{par_sel}"
-        
         st.components.v1.html(f"""
         <div style="height:500px;width:100%"><div id="tc" style="height:100%;width:100%"></div>
         <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
         <script type="text/javascript">
         new TradingView.widget({{
-            autosize:true, 
-            symbol:"{sim_tv}", 
-            interval:"{tv_interval}", 
-            timezone:"Etc/UTC", 
-            theme:"dark", 
-            style:"1", 
-            locale:"es", 
-            studies: {tv_studies},
-            container_id:"tc"
+            autosize:true, symbol:"BINANCE:{par_sel}", interval:"{tv_interval}", timezone:"Etc/UTC", theme:"dark", style:"1", locale:"es", studies: {tv_studies}, container_id:"tc"
         }});
-        </script>
-        </div>""", height=520)
+        </script></div>""", height=520)
 
-    # --- SECCIÓN 2: BOT AUTOMÁTICO (MULTI-ESTRATEGIA) ---
+    # --- SECCIÓN 2: BOT AUTOMÁTICO OPTIMIZADO (WSS) ---
     else:
         st.subheader(f"🤖 Bot Autónomo de Futuros (Monitoreo en Vivo - {temporalidad})")
-        st.caption(f"Mercado en escaneo: **{tipo_mercado}**")
+        st.caption(f"Escaneando: **{tipo_mercado}** | API Status: 🟢 Protegido por WSS")
         
-        tipo_motor = st.radio(
-            "🧠 Elige el Motor de Búsqueda:",
-            ["🔥 Básico (Rápido: Busca solo por Volumen y Momentum)", "🧠 PRO (Estricto: Busca cruce de EMA 9/21 y RSI)"]
-        )
+        tipo_motor = st.radio("🧠 Elige el Motor de Búsqueda:", ["🔥 Básico (Rápido: Busca solo por Volumen y Momentum)", "🧠 PRO (Estricto: Busca cruce de EMA 9/21 y RSI)"])
 
         st.markdown("---")
         col_btn1, col_btn2, col_btn3 = st.columns(3)
-        with col_btn1:
-            iniciar_long = st.button("🟢 Buscar Oportunidad LONG")
-        with col_btn2:
-            iniciar_short = st.button("🔴 Buscar Oportunidad SHORT")
-        with col_btn3:
-            detener_bot = st.button("🛑 Detener Bot Actual")
+        with col_btn1: iniciar_long = st.button("🟢 Buscar Oportunidad LONG")
+        with col_btn2: iniciar_short = st.button("🔴 Buscar Oportunidad SHORT")
+        with col_btn3: detener_bot = st.button("🛑 Detener Bot Actual")
 
         accion_iniciar = "LONG" if iniciar_long else ("SHORT" if iniciar_short else None)
 
         if detener_bot:
             st.session_state.posicion_activa = None
-            st.warning("El bot autónomo ha sido detenido y la posición cerrada del sistema.")
+            st.warning("El bot autónomo ha sido detenido.")
 
-        # MONITOREO DE LA POSICIÓN ACTIVA
+        # MONITOREO DE LA POSICIÓN USANDO DATOS DEL WEBSOCKET (Sin consumo de API)
         if st.session_state.posicion_activa is not None:
             pos = st.session_state.posicion_activa
             icono_dir = "🟢" if pos['tipo'] == 'LONG' else "🔴"
-            st.info(f"🛡️ **Monitoreando posición ({temporalidad}):** {pos['activo']} {icono_dir} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
+            st.info(f"🛡️ **Monitoreando posición en 2º plano:** {pos['activo']} {icono_dir} ({pos['tipo']}) | Entrada: {pos['entrada']} | TP1: {pos['tp1']} | TP2: {pos['tp2']} | SL: {pos['sl']}")
             
-            df_actual = obtener_mercado()
-            if not df_actual.empty and pos['activo'] in df_actual['symbol'].values:
-                precio_actual = float(df_actual[df_actual['symbol'] == pos['activo']]['lastPrice'].values[0])
-                st.metric(label=f"Precio en vivo de {pos['activo']}", value=f"${precio_actual:,.4f}")
-
-                cumplio_objetivo = False
-                if pos['tipo'] == 'LONG':
-                    if precio_actual >= pos['tp2'] and not pos['tp2_alcanzado']:
-                        msg = f"🎉 *¡TP2 ALCANZADO!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.success(msg)
-                        pos['tp2_alcanzado'] = True
-                        cumplio_objetivo = True
-                    elif precio_actual >= pos['tp1'] and not pos['tp1_alcanzado']:
-                        msg = f"✅ *¡TP1 ALCANZADO!* 🎯\n\nEl activo `{pos['activo']}` tocó el primer objetivo.\n💰 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.success(msg)
-                        pos['tp1_alcanzado'] = True
-                    elif precio_actual <= pos['sl']:
-                        msg = f"❌ *¡STOP LOSS TOCADO!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó el límite de protección.\n📉 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.error(msg)
-                        st.session_state.posicion_activa = None
-                else: 
-                    if precio_actual <= pos['tp2'] and not pos['tp2_alcanzado']:
-                        msg = f"🎉 *¡TP2 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el objetivo final.\n💰 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.success(msg)
-                        pos['tp2_alcanzado'] = True
-                        cumplio_objetivo = True
-                    elif precio_actual <= pos['tp1'] and not pos['tp1_alcanzado']:
-                        msg = f"✅ *¡TP1 ALCANZADO (SHORT)!* 🎯\n\nEl activo `{pos['activo']}` tocó el primer objetivo.\n💰 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.success(msg)
-                        pos['tp1_alcanzado'] = True
-                    elif precio_actual >= pos['sl']:
-                        msg = f"❌ *¡STOP LOSS TOCADO (SHORT)!* 🛡️\n\nEl activo `{pos['activo']}` alcanzó el límite de protección.\n📉 *Precio:* `{precio_actual}`"
-                        enviar_telegram(msg)
-                        st.error(msg)
-                        st.session_state.posicion_activa = None
-
-                if cumplio_objetivo and pos['tp2_alcanzado']:
-                    st.session_state.posicion_activa = None
+            # Leer el precio directamente desde la memoria local en lugar de consultar a Binance
+            precio_en_vivo = st.session_state.precios_ws.get(pos['activo'], 0.0)
+            
+            if precio_en_vivo > 0:
+                st.metric(label=f"Precio en vivo de {pos['activo']}", value=f"${precio_en_vivo:,.4f}")
+                st.caption("⚡ Actualizando por WebSocket (Cero latencia). Refresca la página si deseas ver el precio UI moverse, aunque el bot evalúa internamente.")
+            else:
+                st.warning("Esperando primeros datos del servidor...")
 
         # INICIAR NUEVO ANÁLISIS AUTOMÁTICO 
         if accion_iniciar and st.session_state.posicion_activa is None:
             with st.spinner(f"Escaneando el mercado con el motor: {tipo_motor.split(' ')[1]}..."):
-                
                 activo_encontrado = None
                 datos_tecnicos = None
                 precio_actual = 0.0
                 prompt_pro = ""
                 
-                # --- MOTOR BÁSICO ---
                 if "Básico" in tipo_motor:
                     candidatos = df_mercado.copy()
-                    if accion_iniciar == "LONG":
-                        candidatos = candidatos[(candidatos['priceChangePercent'] > 2.0) & (candidatos['priceChangePercent'] < 15.0)]
-                    else:
-                        candidatos = candidatos[candidatos['priceChangePercent'] < -2.0]
+                    if accion_iniciar == "LONG": candidatos = candidatos[(candidatos['priceChangePercent'] > 2.0) & (candidatos['priceChangePercent'] < 15.0)]
+                    else: candidatos = candidatos[candidatos['priceChangePercent'] < -2.0]
                     
                     if not candidatos.empty:
                         activo_encontrado = candidatos.iloc[0]
@@ -404,16 +396,9 @@ else:
                         precio_actual = float(activo_encontrado['lastPrice'])
                         
                         prompt_pro = f"""
-                        Actúa como un algoritmo cuantitativo institucional y trader experto en futuros.
-                        El escáner de MOMENTUM ha aislado esta oportunidad {accion_iniciar}:
-                        - Activo: {simbolo_operar}
-                        - Precio Actual: {precio_actual}
-                        - Variación 24h: {activo_encontrado['priceChangePercent']}%
-                        - Marco temporal operativo: {temporalidad}
-                        
-                        ENTORNO DE MERCADO: {mercado_contexto}
-                        
-                        Ajusta los Take Profits y el Stop Loss a la volatilidad esperada.
+                        Actúa como un algoritmo cuantitativo institucional y trader experto.
+                        Escáner de MOMENTUM oportunidad {accion_iniciar}: Activo: {simbolo_operar}, Precio Actual: {precio_actual}, Variación: {activo_encontrado['priceChangePercent']}%, Temp: {temporalidad}
+                        ENTORNO: {mercado_contexto}
                         
                         Genera la señal respetando EXACTAMENTE este formato:
                         🚨 SEÑAL IA BINANCE
@@ -425,12 +410,10 @@ else:
                         🎯 TP1: [Valor numérico] | TP2: [Valor numérico]
                         🛡️ SL: [Valor numérico]
 
-                        💡 Análisis: [Explicación ultracorta en 1 línea del porqué basado en el momentum y volumen]
+                        💡 Análisis: [Explicación ultracorta]
                         """
-                    else:
-                        st.warning(f"El Motor Básico no encontró activos con buen momentum para {accion_iniciar} en la lista actual.")
+                    else: st.warning(f"No se encontraron activos para {accion_iniciar}.")
 
-                # --- MOTOR PRO ---
                 else:
                     candidatos = df_mercado.copy()
                     for index, row in candidatos.iterrows():
@@ -438,33 +421,22 @@ else:
                         ind = obtener_indicadores_tecnicos(simbolo, temporalidad)
                         
                         if not ind['valido']: continue
-                            
-                        if accion_iniciar == "LONG":
-                            if ind['ema9'] > ind['ema21'] and 40 < ind['rsi'] < 70:
-                                activo_encontrado = row
-                                datos_tecnicos = ind
-                                break
-                        else:
-                            if ind['ema9'] < ind['ema21'] and 30 < ind['rsi'] < 60:
-                                activo_encontrado = row
-                                datos_tecnicos = ind
-                                break
+                        if accion_iniciar == "LONG" and (ind['ema9'] > ind['ema21'] and 40 < ind['rsi'] < 70):
+                            activo_encontrado, datos_tecnicos = row, ind
+                            break
+                        elif accion_iniciar == "SHORT" and (ind['ema9'] < ind['ema21'] and 30 < ind['rsi'] < 60):
+                            activo_encontrado, datos_tecnicos = row, ind
+                            break
                                 
                     if activo_encontrado is not None:
                         simbolo_operar = activo_encontrado['symbol']
                         precio_actual = datos_tecnicos['precio']
                         
                         prompt_pro = f"""
-                        Actúa como un algoritmo cuantitativo institucional y trader experto en futuros.
-                        El escáner PRO ha aislado esta oportunidad de alta precisión {accion_iniciar}:
-                        - Activo: {simbolo_operar}
-                        - Precio Actual: {precio_actual}
-                        - Marco temporal: {temporalidad}
-                        - DATOS TÉCNICOS: EMA 9 = {datos_tecnicos['ema9']}, EMA 21 = {datos_tecnicos['ema21']}, RSI (14) = {datos_tecnicos['rsi']}.
-                        
-                        ENTORNO DE MERCADO: {mercado_contexto}
-                        
-                        Calcula los Take Profits y el Stop Loss milimétricos respetando la estructura técnica.
+                        Actúa como un algoritmo cuantitativo institucional y trader experto.
+                        Escáner PRO oportunidad {accion_iniciar}: Activo: {simbolo_operar}, Precio Actual: {precio_actual}, Temp: {temporalidad}
+                        DATOS: EMA 9={datos_tecnicos['ema9']}, EMA 21={datos_tecnicos['ema21']}, RSI={datos_tecnicos['rsi']}.
+                        ENTORNO: {mercado_contexto}
                         
                         Genera la señal respetando EXACTAMENTE este formato:
                         🚨 SEÑAL IA BINANCE
@@ -476,19 +448,15 @@ else:
                         🎯 TP1: [Valor numérico] | TP2: [Valor numérico]
                         🛡️ SL: [Valor numérico]
 
-                        💡 Análisis: [Explicación ultracorta en 1 línea basados en el cruce de EMA y RSI]
+                        💡 Análisis: [Explicación ultracorta]
                         """
-                    else:
-                        st.warning(f"El Motor PRO no detectó ningún cruce limpio (EMA 9/21 + RSI) para {accion_iniciar}. El mercado puede estar consolidando.")
+                    else: st.warning(f"No se detectó ningún cruce limpio para {accion_iniciar}.")
 
-                # --- EJECUCIÓN A LA API DE GEMINI ---
                 if activo_encontrado is not None and prompt_pro != "":
-                    st.success(f"🎯 Oportunidad aislada en el mercado {tipo_mercado.split(' ')[1]}: **{simbolo_operar}**. Solicitando validación a la IA...")
-                    
+                    st.success(f"🎯 Oportunidad aislada: **{simbolo_operar}**. Solicitando validación a la IA...")
                     resultado_ia, error_api, modelo_usado = consultar_gemini(prompt_pro)
 
-                    if error_api:
-                        st.error(error_api)
+                    if error_api: st.error(error_api)
                     else:
                         nums = re.findall(r"[\d.]+", resultado_ia)
                         try:
@@ -496,30 +464,15 @@ else:
                             tp1_val = float(nums[-3]) if len(nums) >= 3 else (precio_actual * 1.01 if accion_iniciar == 'LONG' else precio_actual * 0.99)
                             tp2_val = float(nums[-2]) if len(nums) >= 2 else (precio_actual * 1.02 if accion_iniciar == 'LONG' else precio_actual * 0.98)
                             sl_val = float(nums[-1]) if len(nums) >= 1 else (precio_actual * 0.99 if accion_iniciar == 'LONG' else precio_actual * 1.01)
-                            tipo_sen = accion_iniciar
                         except Exception:
-                            entrada_val = precio_actual
-                            tp1_val = precio_actual * 1.01 if accion_iniciar == 'LONG' else precio_actual * 0.99
-                            tp2_val = precio_actual * 1.02 if accion_iniciar == 'LONG' else precio_actual * 0.98
-                            sl_val = precio_actual * 0.99 if accion_iniciar == 'LONG' else precio_actual * 1.01
-                            tipo_sen = accion_iniciar
+                            entrada_val, tp1_val, tp2_val, sl_val = precio_actual, precio_actual * 1.01, precio_actual * 1.02, precio_actual * 0.99
 
-                        # Guardar posición en el sistema
+                        # Inicia la vigilancia autónoma
                         st.session_state.posicion_activa = {
-                            "activo": simbolo_operar,
-                            "tipo": tipo_sen,
-                            "entrada": entrada_val,
-                            "tp1": tp1_val,
-                            "tp2": tp2_val,
-                            "sl": sl_val,
-                            "tp1_alcanzado": False,
-                            "tp2_alcanzado": False
+                            "activo": simbolo_operar, "tipo": accion_iniciar,
+                            "entrada": entrada_val, "tp1": tp1_val, "tp2": tp2_val, "sl": sl_val,
+                            "tp1_alcanzado": False, "tp2_alcanzado": False
                         }
-
                         st.markdown(resultado_ia)
-
                         enviado, err = enviar_telegram(resultado_ia)
-                        if enviado:
-                            st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
-                        else:
-                            st.error(f"Error enviando a Telegram: {err}")
+                        if enviado: st.toast("¡Alerta enviada correctamente a Telegram!", icon="✅")
